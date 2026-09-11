@@ -35,6 +35,8 @@ class SyncCommand extends Command
             $this->line("Queued [{$mapping->connection->name}] {$mapping->remote_event_name} → local event #{$mapping->local_event_id}");
         }
 
+        $this->comment('A mapping already waiting in the queue is not queued a second time.');
+
         return self::SUCCESS;
     }
 }

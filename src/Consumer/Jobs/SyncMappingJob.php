@@ -2,7 +2,7 @@
 
 namespace Jma\Connect\Consumer\Jobs;
 
-use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Jma\Connect\Consumer\Models\SyncMapping;
@@ -11,7 +11,12 @@ use Jma\Connect\Contracts\AttendeeSink;
 use Jma\Connect\Enums\SyncRunStatus;
 use Throwable;
 
-class SyncMappingJob implements ShouldBeUnique, ShouldQueue
+/**
+ * Unique only while waiting: the hourly schedule and "Sync now" can't pile
+ * up duplicates in the queue, but a run already in progress never blocks a
+ * fresh request (which would otherwise sit behind a stale 10-minute lock).
+ */
+class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
     use Queueable;
 

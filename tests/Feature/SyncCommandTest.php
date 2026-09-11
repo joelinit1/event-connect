@@ -29,6 +29,13 @@ it('can be limited to a single mapping', function () {
     Queue::assertPushed(SyncMappingJob::class, fn (SyncMappingJob $job) => $job->mapping->is($this->alsoEnabled));
 });
 
+it('does not queue the same mapping twice while one is already waiting', function () {
+    $this->artisan('connect:sync', ['--mapping' => $this->enabled->id])->assertSuccessful();
+    $this->artisan('connect:sync', ['--mapping' => $this->enabled->id])->assertSuccessful();
+
+    Queue::assertPushed(SyncMappingJob::class, 1);
+});
+
 it('reports when there is nothing to sync', function () {
     SyncMapping::query()->update(['enabled' => false]);
 
