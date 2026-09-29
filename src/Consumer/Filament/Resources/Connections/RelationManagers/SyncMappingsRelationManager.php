@@ -126,7 +126,7 @@ class SyncMappingsRelationManager extends RelationManager
         return config('connect.consumer.event_model')::query()
             ->when(
                 filled(config('connect.consumer.tenant_model')) && $connection->tenant_id,
-                fn ($query) => $query->where('tenant_id', $connection->tenant_id),
+                fn ($query) => $query->where(config('connect.consumer.event_tenant_key', 'tenant_id'), $connection->tenant_id),
             )
             ->orderBy($label)
             ->pluck($label, 'id')

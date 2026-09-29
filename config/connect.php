@@ -40,9 +40,11 @@ return [
         'sink' => null,
 
         // Optional: scope connections to a tenant/client model. When set,
-        // the event model is expected to carry a matching tenant_id column.
+        // the event model is expected to carry a column (event_tenant_key)
+        // holding that tenant's id.
         'tenant_model' => null,
         'tenant_label' => 'name',
+        'event_tenant_key' => 'tenant_id',
 
         // The local model a remote event is mapped onto.
         'event_model' => null,
