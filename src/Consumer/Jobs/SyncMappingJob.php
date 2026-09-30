@@ -63,6 +63,8 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 
             foreach ($mapping->connection->source()->attendees($mapping->remote_event_id, $since) as $attendee) {
                 try {
+                    $attendee->assertValid();
+
                     $counts[$sink->write($mapping, $attendee)->value]++;
                 } catch (Throwable $e) {
                     if (count($errors) < SyncRun::MAX_ERRORS) {

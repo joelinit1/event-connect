@@ -3,6 +3,7 @@
 use Carbon\CarbonImmutable;
 use Jma\Connect\Data\AttendeeData;
 use Jma\Connect\Data\EventData;
+use Jma\Connect\Exceptions\InvalidAttendeeData;
 
 it('round-trips an attendee through the wire format', function () {
     $original = new AttendeeData(
@@ -40,3 +41,32 @@ it('round-trips an event through the wire format', function () {
 
     expect(EventData::fromArray($original->toArray())->toArray())->toBe($original->toArray());
 });
+
+it('tells a key the source never sent apart from one it sent as null', function () {
+    $attendee = AttendeeData::fromArray(['id' => 1, 'first_name' => 'Ada', 'last_name' => 'Lovelace', 'email' => null]);
+
+    expect($attendee->has('email'))->toBeTrue()
+        ->and($attendee->has('company'))->toBeFalse()
+        ->and($attendee->toArray())->toBe(['id' => '1', 'first_name' => 'Ada', 'last_name' => 'Lovelace', 'email' => null]);
+});
+
+it('treats every field as sent when built in code', function () {
+    $attendee = new AttendeeData(id: '1', firstName: 'Ada', lastName: 'Lovelace');
+
+    expect($attendee->has('email'))->toBeTrue()
+        ->and($attendee->toArray())->toHaveKeys(['email', 'company', 'extra']);
+});
+
+it('rejects a live attendee whose name is missing or blank', function (array $row, string $message) {
+    expect(fn () => AttendeeData::fromArray(['id' => 1, ...$row])->assertValid())
+        ->toThrow(InvalidAttendeeData::class, $message);
+})->with([
+    'first name absent' => [['last_name' => 'Lovelace'], 'Missing required first_name.'],
+    'last name null' => [['first_name' => 'Ada', 'last_name' => null], 'Missing required last_name.'],
+    'both blank' => [['first_name' => ' ', 'last_name' => ''], 'Missing required first_name, last_name.'],
+]);
+
+it('accepts a named attendee and a nameless tombstone', function () {
+    AttendeeData::fromArray(['id' => 1, 'first_name' => 'Ada', 'last_name' => 'Lovelace'])->assertValid();
+    AttendeeData::fromArray(['id' => 2, 'deleted_at' => '2026-03-02T00:00:00Z'])->assertValid();
+})->throwsNoExceptions();
