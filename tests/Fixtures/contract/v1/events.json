@@ -1,0 +1,15 @@
+{
+    "data": [
+        {
+            "id": "9",
+            "name": "Spring Gala",
+            "slug": "spring-gala",
+            "starts_at": "2026-05-01T18:00:00+00:00",
+            "ends_at": "2026-05-01T23:30:00+00:00",
+            "updated_at": "2026-04-20T10:00:00+00:00"
+        }
+    ],
+    "links": {
+        "next": null
+    }
+}

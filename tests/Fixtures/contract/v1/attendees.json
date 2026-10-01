@@ -1,0 +1,28 @@
+{
+    "data": [
+        {
+            "id": "a1",
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@example.com",
+            "company": "Analytical Engines",
+            "job_title": "Mathematician",
+            "table": "T3",
+            "seat": "2",
+            "zone": "Main hall",
+            "checked_in_at": "2026-03-01T18:30:00+00:00",
+            "updated_at": "2026-03-01T12:00:00+00:00",
+            "deleted_at": null,
+            "extra": {
+                "dietary": "Vegetarian"
+            }
+        },
+        {
+            "id": "a2",
+            "deleted_at": "2026-03-02T09:00:00+00:00"
+        }
+    ],
+    "links": {
+        "next": null
+    }
+}
