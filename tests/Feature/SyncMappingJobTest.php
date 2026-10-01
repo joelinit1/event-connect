@@ -108,3 +108,29 @@ it('marks the run failed, keeps the cursor and rethrows when the source is unrea
         ->and($mapping->fresh()->cursor)->toBeNull()
         ->and(RecordingSink::$written)->toBe([]);
 });
+
+it('records a nameless attendee as a row error without passing it to the sink', function () {
+    Http::fake([
+        'source.test/api/v1/events/7/attendees*' => Http::response([
+            'data' => [
+                ['id' => 1, 'first_name' => 'Ada', 'last_name' => 'Lovelace'],
+                ['id' => 2, 'first_name' => '', 'last_name' => 'Hopper'],
+                ['id' => 3, 'deleted_at' => '2026-02-01T00:00:00Z'],
+            ],
+            'links' => ['next' => null],
+        ]),
+    ]);
+    RecordingSink::$behaviour = fn (AttendeeData $a) => $a->isDeleted() ? WriteResult::Deleted : WriteResult::Created;
+
+    $mapping = mapping();
+
+    SyncMappingJob::dispatchSync($mapping);
+
+    $run = $mapping->runs()->sole();
+
+    expect(collect(RecordingSink::$written)->pluck('attendee.id')->all())->toBe(['1', '3'])
+        ->and($run->status)->toBe(SyncRunStatus::Partial)
+        ->and($run->created)->toBe(1)
+        ->and($run->deleted)->toBe(1)
+        ->and($run->errors)->toBe(['[2] Missing required first_name.']);
+});
