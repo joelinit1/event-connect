@@ -24,6 +24,7 @@ final readonly class AttendeeData
         public ?string $table = null,
         public ?string $seat = null,
         public ?string $zone = null,
+        public ?string $bookingRef = null,
         public ?CarbonImmutable $checkedInAt = null,
         public ?CarbonImmutable $updatedAt = null,
         public ?CarbonImmutable $deletedAt = null,
@@ -32,7 +33,7 @@ final readonly class AttendeeData
     ) {}
 
     /**
-     * @param  array{id: string|int, first_name?: ?string, last_name?: ?string, email?: ?string, company?: ?string, job_title?: ?string, table?: ?string, seat?: ?string, zone?: ?string, checked_in_at?: ?string, updated_at?: ?string, deleted_at?: ?string, extra?: ?array<string, mixed>}  $data
+     * @param  array{id: string|int, first_name?: ?string, last_name?: ?string, email?: ?string, company?: ?string, job_title?: ?string, table?: ?string, seat?: ?string, zone?: ?string, booking_ref?: ?string, checked_in_at?: ?string, updated_at?: ?string, deleted_at?: ?string, extra?: ?array<string, mixed>}  $data
      */
     public static function fromArray(array $data): self
     {
@@ -46,6 +47,7 @@ final readonly class AttendeeData
             table: $data['table'] ?? null,
             seat: $data['seat'] ?? null,
             zone: $data['zone'] ?? null,
+            bookingRef: $data['booking_ref'] ?? null,
             checkedInAt: Dates::parse($data['checked_in_at'] ?? null),
             updatedAt: Dates::parse($data['updated_at'] ?? null),
             deletedAt: Dates::parse($data['deleted_at'] ?? null),
@@ -69,6 +71,7 @@ final readonly class AttendeeData
             'table' => $this->table,
             'seat' => $this->seat,
             'zone' => $this->zone,
+            'booking_ref' => $this->bookingRef,
             'checked_in_at' => Dates::format($this->checkedInAt),
             'updated_at' => Dates::format($this->updatedAt),
             'deleted_at' => Dates::format($this->deletedAt),
