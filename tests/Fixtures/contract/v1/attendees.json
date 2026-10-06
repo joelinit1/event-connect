@@ -11,6 +11,7 @@
             "seat": "2",
             "zone": "Main hall",
             "booking_ref": "7K3F9Q",
+            "category": "VIP",
             "checked_in_at": "2026-03-01T18:30:00+00:00",
             "updated_at": "2026-03-01T12:00:00+00:00",
             "deleted_at": null,

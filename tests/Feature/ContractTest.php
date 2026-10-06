@@ -37,6 +37,7 @@ it('serialises an attendee to exactly the contract keys', function () {
         seat: '2',
         zone: 'Main hall',
         bookingRef: '7K3F9Q',
+        category: 'VIP',
         checkedInAt: CarbonImmutable::parse('2026-03-01T18:30:00Z'),
         updatedAt: CarbonImmutable::parse('2026-03-01T12:00:00Z'),
         extra: ['dietary' => 'Vegetarian'],

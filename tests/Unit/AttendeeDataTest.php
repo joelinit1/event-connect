@@ -17,6 +17,7 @@ it('round-trips an attendee through the wire format', function () {
         seat: '2',
         zone: 'Main hall',
         bookingRef: '7K3F9Q',
+        category: 'VIP',
         checkedInAt: CarbonImmutable::parse('2026-03-01T18:30:00Z'),
         updatedAt: CarbonImmutable::parse('2026-03-01T12:00:00Z'),
         extra: ['full_name' => 'Ada Lovelace'],
@@ -57,6 +58,14 @@ it('treats booking_ref as not sent by a provider that predates it', function () 
     expect($attendee->has('booking_ref'))->toBeFalse()
         ->and($attendee->bookingRef)->toBeNull()
         ->and(AttendeeData::fromArray(['id' => 1, 'booking_ref' => '7K3F9Q'])->bookingRef)->toBe('7K3F9Q');
+});
+
+it('treats category as not sent by a provider that predates it', function () {
+    $attendee = AttendeeData::fromArray(['id' => 1, 'first_name' => 'Ada', 'last_name' => 'Lovelace']);
+
+    expect($attendee->has('category'))->toBeFalse()
+        ->and($attendee->category)->toBeNull()
+        ->and(AttendeeData::fromArray(['id' => 1, 'category' => 'VIP'])->category)->toBe('VIP');
 });
 
 it('treats every field as sent when built in code', function () {
