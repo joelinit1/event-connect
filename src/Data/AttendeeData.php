@@ -26,6 +26,7 @@ final readonly class AttendeeData
         public ?string $zone = null,
         public ?string $bookingRef = null,
         public ?string $category = null,
+        public ?string $checkInCode = null,
         public ?CarbonImmutable $checkedInAt = null,
         public ?CarbonImmutable $updatedAt = null,
         public ?CarbonImmutable $deletedAt = null,
@@ -34,7 +35,7 @@ final readonly class AttendeeData
     ) {}
 
     /**
-     * @param  array{id: string|int, first_name?: ?string, last_name?: ?string, email?: ?string, company?: ?string, job_title?: ?string, table?: ?string, seat?: ?string, zone?: ?string, booking_ref?: ?string, category?: ?string, checked_in_at?: ?string, updated_at?: ?string, deleted_at?: ?string, extra?: ?array<string, mixed>}  $data
+     * @param  array{id: string|int, first_name?: ?string, last_name?: ?string, email?: ?string, company?: ?string, job_title?: ?string, table?: ?string, seat?: ?string, zone?: ?string, booking_ref?: ?string, category?: ?string, check_in_code?: ?string, checked_in_at?: ?string, updated_at?: ?string, deleted_at?: ?string, extra?: ?array<string, mixed>}  $data
      */
     public static function fromArray(array $data): self
     {
@@ -50,6 +51,7 @@ final readonly class AttendeeData
             zone: $data['zone'] ?? null,
             bookingRef: $data['booking_ref'] ?? null,
             category: $data['category'] ?? null,
+            checkInCode: $data['check_in_code'] ?? null,
             checkedInAt: Dates::parse($data['checked_in_at'] ?? null),
             updatedAt: Dates::parse($data['updated_at'] ?? null),
             deletedAt: Dates::parse($data['deleted_at'] ?? null),
@@ -75,6 +77,7 @@ final readonly class AttendeeData
             'zone' => $this->zone,
             'booking_ref' => $this->bookingRef,
             'category' => $this->category,
+            'check_in_code' => $this->checkInCode,
             'checked_in_at' => Dates::format($this->checkedInAt),
             'updated_at' => Dates::format($this->updatedAt),
             'deleted_at' => Dates::format($this->deletedAt),
