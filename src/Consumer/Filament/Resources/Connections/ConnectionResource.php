@@ -3,6 +3,8 @@
 namespace Jma\Connect\Consumer\Filament\Resources\Connections;
 
 use BackedEnum;
+use Filament\Facades\Filament;
+use Filament\Panel;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
@@ -63,5 +65,17 @@ class ConnectionResource extends Resource
             'create' => CreateConnection::route('/create'),
             'edit' => EditConnection::route('/{record}/edit'),
         ];
+    }
+
+    /**
+     * Works outside a request (queued jobs, other panels): finds whichever
+     * panel the host registered this resource on. Null when there isn't one.
+     */
+    public static function editUrlFor(Connection $connection): ?string
+    {
+        $panel = collect(Filament::getPanels())
+            ->first(fn (Panel $panel) => in_array(static::class, $panel->getResources(), true));
+
+        return $panel ? static::getUrl('edit', ['record' => $connection], panel: $panel->getId()) : null;
     }
 }

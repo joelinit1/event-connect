@@ -4,10 +4,13 @@ namespace Jma\Connect\Consumer\Jobs;
 
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Queue\Queueable;
 use Jma\Connect\Consumer\Models\SyncMapping;
 use Jma\Connect\Consumer\Models\SyncRun;
+use Jma\Connect\Consumer\Notifications\SyncRunNotification;
 use Jma\Connect\Contracts\AttendeeSink;
+use Jma\Connect\Contracts\SyncAlertRecipients;
 use Jma\Connect\Enums\SyncRunStatus;
 use Throwable;
 
@@ -15,6 +18,10 @@ use Throwable;
  * Unique only while waiting: the hourly schedule and "Sync now" can't pile
  * up duplicates in the queue, but a run already in progress never blocks a
  * fresh request (which would otherwise sit behind a stale 10-minute lock).
+ *
+ * $requestedBy is whoever clicked "Sync now" (null for scheduled runs): they
+ * get the outcome in their notification bell. A run that fails for good also
+ * alerts the host's SyncAlertRecipients, scheduled or not.
  */
 class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
@@ -24,7 +31,7 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 
     public int $uniqueFor = 600;
 
-    public function __construct(public SyncMapping $mapping)
+    public function __construct(public SyncMapping $mapping, public ?Model $requestedBy = null)
     {
         $this->onQueue(config('connect.consumer.queue', 'default'));
     }
@@ -94,6 +101,10 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         // human to act on, whereas holding the cursor back would re-pull
         // the whole window forever for one bad row.
         $mapping->update(['cursor' => $startedAt]);
+
+        if ($this->requestedBy !== null) {
+            $this->notify([$this->requestedBy], $run);
+        }
     }
 
     public function failed(?Throwable $exception): void
@@ -105,5 +116,34 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
                 'finished_at' => now(),
                 'errors' => json_encode([$exception?->getMessage() ?? 'Job failed.']),
             ]);
+
+        $run = $this->mapping->runs()->latest('id')->first();
+
+        if ($run !== null) {
+            $this->notify([...$this->alertRecipients(), $this->requestedBy], $run);
+        }
+    }
+
+    /**
+     * @return iterable<Model>
+     */
+    private function alertRecipients(): iterable
+    {
+        /** @var class-string<SyncAlertRecipients>|null $class */
+        $class = config('connect.consumer.alert_recipients');
+
+        return $class ? app($class)->recipients() : [];
+    }
+
+    /**
+     * Never lets a notification problem fail (and so retry) the sync itself.
+     *
+     * @param  array<Model|null>  $users
+     */
+    private function notify(array $users, SyncRun $run): void
+    {
+        $users = collect($users)->filter()->unique(fn (Model $user) => $user::class.':'.$user->getKey());
+
+        rescue(fn () => SyncRunNotification::make($run)->sendToDatabase($users));
     }
 }

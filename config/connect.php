@@ -56,6 +56,17 @@ return [
         // changed while a long run was in flight are never missed.
         'cursor_overlap_minutes' => 5,
 
+        // A mapping shows as Overdue once its last successful run is older
+        // than this. The schedule runs hourly, so the default allows one
+        // missed run plus slack before flagging it.
+        'stale_after_minutes' => 120,
+
+        // Class implementing Jma\Connect\Contracts\SyncAlertRecipients: who
+        // gets a Filament database notification when a sync fails for good
+        // (after its retries). Null means nobody beyond whoever clicked
+        // "Sync now", who is always told how their own run went.
+        'alert_recipients' => null,
+
         // driver name => class implementing Jma\Connect\Contracts\Source.
         'drivers' => [
             'suite' => SuiteSource::class,

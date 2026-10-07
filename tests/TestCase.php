@@ -2,11 +2,16 @@
 
 namespace Jma\Connect\Tests;
 
+use Filament\Actions\ActionsServiceProvider;
+use Filament\FilamentServiceProvider;
+use Filament\Notifications\NotificationsServiceProvider;
+use Filament\Support\SupportServiceProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Jma\Connect\ConnectServiceProvider;
 use Jma\Connect\Tests\Fixtures\RecordingSink;
 use Jma\Connect\Tests\Fixtures\StubAttendeeProvider;
 use Laravel\Sanctum\SanctumServiceProvider;
+use Livewire\LivewireServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
@@ -24,6 +29,11 @@ abstract class TestCase extends Orchestra
     protected function getPackageProviders($app): array
     {
         return [
+            LivewireServiceProvider::class,
+            SupportServiceProvider::class,
+            ActionsServiceProvider::class,
+            NotificationsServiceProvider::class,
+            FilamentServiceProvider::class,
             SanctumServiceProvider::class,
             ConnectServiceProvider::class,
         ];

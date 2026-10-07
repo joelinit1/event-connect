@@ -9,6 +9,7 @@ use Filament\Notifications\Notification;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Jma\Connect\Consumer\Filament\Resources\Connections\RelationManagers\SyncMappingsRelationManager;
 use Jma\Connect\Consumer\Jobs\SyncMappingJob;
 use Jma\Connect\Consumer\Models\Connection;
 use Throwable;
@@ -18,6 +19,7 @@ class ConnectionsTable
     public static function configure(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn ($query) => $query->with(['mappings.latestRun', 'mappings.latestSuccessfulRun']))
             ->columns([
                 TextColumn::make('tenant.'.config('connect.consumer.tenant_label', 'name'))
                     ->label('Client')
@@ -37,6 +39,14 @@ class ConnectionsTable
                     ->badge()
                     ->formatStateUsing(fn (int $state) => $state === 0 ? 'No mappings' : (string) $state)
                     ->color(fn (int $state) => $state === 0 ? 'warning' : 'gray'),
+                TextColumn::make('health')
+                    ->label('Sync health')
+                    ->state(fn (Connection $record) => $record->health())
+                    ->badge()
+                    ->description(fn (Connection $record) => $record->lastSyncedAt()
+                        ? 'Last synced '.$record->lastSyncedAt()->diffForHumans()
+                        : 'Never synced')
+                    ->tooltip(fn (Connection $record) => $record->health()->getDescription()),
             ])
             ->recordActions([
                 Action::make('testConnection')
@@ -57,10 +67,11 @@ class ConnectionsTable
                     ->action(function (Connection $record): void {
                         $mappings = $record->mappings()->where('enabled', true)->get();
 
-                        $mappings->each(fn ($mapping) => SyncMappingJob::dispatch($mapping));
+                        $mappings->each(fn ($mapping) => SyncMappingJob::dispatch($mapping, auth()->user()));
 
                         Notification::make()
                             ->title($mappings->isEmpty() ? 'Nothing to sync — add an event mapping first' : "Queued {$mappings->count()} sync run(s)")
+                            ->body($mappings->isEmpty() ? null : SyncMappingsRelationManager::QUEUED_BODY)
                             ->{$mappings->isEmpty() ? 'warning' : 'success'}()
                             ->send();
                     }),

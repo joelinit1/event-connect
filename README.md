@@ -8,6 +8,34 @@ Moves events and attendees between Laravel apps in the JMA event suite.
 - **Consumer mode** pulls attendees from a provider on a schedule and hands
   each one to the host app's `Contracts\AttendeeSink`.
 
+## Sync health and notifications (consumer mode)
+
+Each event mapping has a `health()` that is worked out when it's read, not
+stored. That way a stopped scheduler or queue worker still shows up, even
+though it writes nothing:
+
+| Health | Meaning |
+| --- | --- |
+| Healthy | Last successful run finished within `stale_after_minutes` (default 120) |
+| Overdue | Enabled, but no successful run in that window (or ever) |
+| Failing | The latest run failed or had row errors |
+| Off | Mapping disabled |
+
+A connection's health is the worst of its mappings. Both are shown on the API
+Connections screens. Hosts can show them elsewhere: eager-load `latestRun` and
+`latestSuccessfulRun` first.
+
+Notifications go to Filament's database notifications (the bell), so the host
+panel needs `->databaseNotifications()`:
+
+- **Sync now / Full resync / Sync all:** whoever clicked gets the outcome.
+- **A run that fails for good** (after its retries): everyone returned by the
+  host's `connect.consumer.alert_recipients` class (a
+  `Contracts\SyncAlertRecipients`), plus whoever clicked, if anyone. Leave the
+  setting null and scheduled failures alert nobody.
+
+Successful scheduled runs never notify anyone.
+
 ## Versioning
 
 Provider and consumer apps are upgraded separately, so at any time they may

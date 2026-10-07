@@ -27,6 +27,8 @@ class SyncMappingsRelationManager extends RelationManager
 
     protected static ?string $title = 'Event mappings';
 
+    public const QUEUED_BODY = 'The result will appear in your notifications when it finishes.';
+
     public function form(Schema $schema): Schema
     {
         return $schema
@@ -49,6 +51,7 @@ class SyncMappingsRelationManager extends RelationManager
     public function table(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn ($query) => $query->with(['latestRun', 'latestSuccessfulRun']))
             ->columns([
                 TextColumn::make('remote_event_name')
                     ->label('Remote event')
@@ -57,9 +60,15 @@ class SyncMappingsRelationManager extends RelationManager
                     ->label('Local event'),
                 IconColumn::make('enabled')
                     ->boolean(),
-                TextColumn::make('cursor')
-                    ->label('Synced up to')
+                TextColumn::make('health')
+                    ->state(fn (SyncMapping $record) => $record->health())
+                    ->badge()
+                    ->tooltip(fn (SyncMapping $record) => $record->health()->getDescription()),
+                TextColumn::make('last_synced_at')
+                    ->label('Last successful sync')
+                    ->state(fn (SyncMapping $record) => $record->lastSyncedAt())
                     ->since()
+                    ->dateTimeTooltip()
                     ->placeholder('Never'),
                 TextColumn::make('latestRun.status')
                     ->label('Last run')
@@ -74,10 +83,11 @@ class SyncMappingsRelationManager extends RelationManager
                 Action::make('syncNow')
                     ->label('Sync now')
                     ->icon(Heroicon::ArrowPath)
+                    ->tooltip('Fetch attendees changed since the last sync, same as the hourly run.')
                     ->action(function (SyncMapping $record): void {
-                        SyncMappingJob::dispatch($record);
+                        SyncMappingJob::dispatch($record, auth()->user());
 
-                        Notification::make()->title('Sync queued')->success()->send();
+                        Notification::make()->title('Sync queued')->body(self::QUEUED_BODY)->success()->send();
                     }),
                 Action::make('fullResync')
                     ->label('Full resync')
@@ -87,9 +97,9 @@ class SyncMappingsRelationManager extends RelationManager
                     ->action(function (SyncMapping $record): void {
                         $record->update(['cursor' => null]);
 
-                        SyncMappingJob::dispatch($record);
+                        SyncMappingJob::dispatch($record, auth()->user());
 
-                        Notification::make()->title('Full resync queued')->success()->send();
+                        Notification::make()->title('Full resync queued')->body(self::QUEUED_BODY)->success()->send();
                     }),
                 EditAction::make()
                     ->mutateDataUsing(fn (array $data) => $this->withRemoteEventName($data)),
