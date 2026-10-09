@@ -89,11 +89,18 @@ it('rejects a live attendee whose name is missing or blank', function (array $ro
         ->toThrow(InvalidAttendeeData::class, $message);
 })->with([
     'first name absent' => [['last_name' => 'Lovelace'], 'Missing required first_name.'],
-    'last name null' => [['first_name' => 'Ada', 'last_name' => null], 'Missing required last_name.'],
-    'both blank' => [['first_name' => ' ', 'last_name' => ''], 'Missing required first_name, last_name.'],
+    'first name blank' => [['first_name' => ' ', 'last_name' => 'Lovelace'], 'Missing required first_name.'],
 ]);
 
 it('accepts a named attendee and a nameless tombstone', function () {
     AttendeeData::fromArray(['id' => 1, 'first_name' => 'Ada', 'last_name' => 'Lovelace'])->assertValid();
     AttendeeData::fromArray(['id' => 2, 'deleted_at' => '2026-03-02T00:00:00Z'])->assertValid();
 })->throwsNoExceptions();
+
+it('accepts a single-name attendee with no last name', function (array $row) {
+    AttendeeData::fromArray(['id' => 1, 'first_name' => 'Madonna', ...$row])->assertValid();
+})->with([
+    'last name blank' => [['last_name' => '']],
+    'last name null' => [['last_name' => null]],
+    'last name absent' => [[]],
+])->throwsNoExceptions();

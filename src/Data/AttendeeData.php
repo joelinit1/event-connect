@@ -7,7 +7,7 @@ use Jma\Connect\Exceptions\InvalidAttendeeData;
 
 final readonly class AttendeeData
 {
-    public const REQUIRED = ['first_name', 'last_name'];
+    public const REQUIRED = ['first_name'];
 
     /**
      * @param  array<string, mixed>  $extra
@@ -101,8 +101,9 @@ final readonly class AttendeeData
     }
 
     /**
-     * Reject a live attendee without a name rather than let a sink overwrite
-     * real names with blanks. Tombstones only need an id.
+     * Reject a live attendee without a first name rather than let a sink
+     * overwrite real names with blanks. Last name is optional so single-name
+     * people sync. Tombstones only need an id.
      *
      * @throws InvalidAttendeeData
      */
@@ -112,7 +113,7 @@ final readonly class AttendeeData
             return;
         }
 
-        $values = ['first_name' => $this->firstName, 'last_name' => $this->lastName];
+        $values = ['first_name' => $this->firstName];
 
         $missing = array_filter(
             self::REQUIRED,
