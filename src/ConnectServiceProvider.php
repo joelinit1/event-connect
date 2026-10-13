@@ -2,6 +2,8 @@
 
 namespace Jma\Connect;
 
+use Filament\Panel;
+use Filament\PanelRegistry;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Foundation\Application;
@@ -26,6 +28,27 @@ class ConnectServiceProvider extends ServiceProvider
         $this->app->bind(AttendeeProvider::class, fn (Application $app): AttendeeProvider => $app->make(config('connect.provider.class') ?? TableAttendeeProvider::class));
 
         $this->app->bind(AttendeeSink::class, fn (Application $app): AttendeeSink => $app->make(config('connect.consumer.sink') ?? TableAttendeeSink::class));
+
+        // Panels are built while the registry resolves; this runs after all
+        // of them, so the screens appear without the host registering the
+        // plugin. A host that registered it on a panel itself is left alone.
+        $this->app->afterResolving(PanelRegistry::class, function (PanelRegistry $registry): void {
+            if (! config('connect.provider.enabled') && ! config('connect.consumer.enabled')) {
+                return;
+            }
+
+            $panels = collect($registry->all());
+
+            if ($panels->contains(fn (Panel $panel) => $panel->hasPlugin('connect'))) {
+                return;
+            }
+
+            $panel = filled(config('connect.panel'))
+                ? $panels->get(config('connect.panel'))
+                : $panels->first(fn (Panel $panel) => $panel->isDefault()) ?? $panels->first();
+
+            $panel?->plugin(ConnectPlugin::make());
+        });
     }
 
     public function boot(): void
@@ -48,7 +71,7 @@ class ConnectServiceProvider extends ServiceProvider
 
         if (config('connect.consumer.enabled') && config('connect.consumer.schedule')) {
             $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
-                $schedule->command('connect:sync')->cron(config('connect.consumer.schedule'))->withoutOverlapping();
+                $schedule->command('connect:sync')->cron(config('connect.consumer.schedule'))->withoutOverlapping()->runInBackground();
             });
         }
 

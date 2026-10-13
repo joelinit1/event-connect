@@ -3,6 +3,7 @@
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Jma\Connect\Consumer\Filament\Resources\Connections\Pages\EditConnection;
@@ -17,6 +18,8 @@ use Jma\Connect\Provider\Filament\Resources\AttendeeSources\Pages\EditAttendeeSo
 use Jma\Connect\Provider\Filament\Resources\AttendeeSources\Pages\ListAttendeeSources;
 use Jma\Connect\Provider\Models\ApiClient;
 use Jma\Connect\Provider\Models\AttendeeSource;
+use Jma\Connect\Tests\Fixtures\Models\ScannerAttendee;
+use Jma\Connect\Tests\Fixtures\RealWorld;
 use Jma\Connect\Tests\Fixtures\Tables;
 use Jma\Connect\Tests\Fixtures\User;
 use Livewire\Livewire;
@@ -142,4 +145,64 @@ it('renders the API clients and connections lists without a tenant model', funct
     Livewire::test(ListApiClients::class)->assertOk()->assertSee('Seating');
     Livewire::test(ListConnections::class)->assertOk()->assertSee('Registration');
     Livewire::test(EditConnection::class, ['record' => Connection::sole()->getRouteKey()])->assertOk();
+});
+
+it('sets up a sync between real-shaped tables entirely from the screens', function () {
+    config()->set('connect.consumer.models', [ScannerAttendee::class]);
+    RealWorld::registrationApp();
+    RealWorld::checkInApp();
+    RealWorld::registrant('Ada King Lovelace');
+    RealWorld::registrant('Grace Hopper');
+
+    // Provider: pick the table; the event column is found, the event picked by name.
+    Livewire::test(CreateAttendeeSource::class)
+        ->fillForm(['table_name' => 'reg_attendees'])
+        ->assertSchemaStateSet(['id_column' => 'id', 'filter_column' => 'event_id', 'updated_at_column' => 'updated_at', 'deleted_at_column' => 'deleted_at'])
+        ->fillForm(['filter_value' => '1'])
+        ->assertSchemaStateSet(['name' => 'Summer Party'])
+        ->callAction(TestAction::make('suggest')->schemaComponent('field_map'))
+        ->call('create')
+        ->assertHasNoFormErrors();
+
+    $token = ApiClient::create(['name' => 'Check-in'])->issueToken(['events:read', 'attendees:read'], null);
+    $connection = Connection::create(['name' => 'Registration', 'driver' => 'suite', 'base_url' => 'https://registration.test', 'token' => $token]);
+    $sourceId = (string) AttendeeSource::sole()->id;
+
+    // The provider's real API responses, fetched with the token alone (both
+    // apps are this one test app), then served to the consumer screens.
+    $admin = auth()->user();
+    Auth::forgetGuards();
+    $events = $this->withToken($token)->getJson('/api/v1/events')->assertOk()->json();
+    $attendees = $this->withToken($token)->getJson("/api/v1/events/{$sourceId}/attendees")->assertOk()->json();
+    Auth::forgetGuards();
+    $this->actingAs($admin);
+
+    Http::fake([
+        'registration.test/api/v1/events?*' => Http::response($events),
+        "registration.test/api/v1/events/{$sourceId}/attendees*" => Http::response($attendees),
+    ]);
+
+    // Consumer: no remote ID column needed; the local event is picked from the events table.
+    Livewire::test(SyncMappingsRelationManager::class, ['ownerRecord' => $connection, 'pageClass' => EditConnection::class])
+        ->mountAction(TestAction::make('create')->table())
+        ->fillForm(['remote_event_id' => $sourceId, 'target_table' => 'scanner_attendees'])
+        ->assertSchemaStateSet(['target_key_column' => null, 'target_event_column' => 'event_id'])
+        ->assertFormFieldExists('local_event_id', fn ($field) => $field->getOptions() === ['7' => 'Summer Party (check-in) (#7)'])
+        ->fillForm(['local_event_id' => '7'])
+        ->callAction(TestAction::make('suggest')->schemaComponent('field_map'))
+        ->callMountedAction()
+        ->assertHasNoFormErrors();
+
+    $mapping = SyncMapping::sole();
+
+    Livewire::test(SyncMappingsRelationManager::class, ['ownerRecord' => $connection, 'pageClass' => EditConnection::class])
+        ->mountAction(TestAction::make('preview')->table($mapping))
+        ->assertMountedActionModalSee(['create', 'Ada King Lovelace', 'really writing the row']);
+
+    Livewire::test(SyncMappingsRelationManager::class, ['ownerRecord' => $connection, 'pageClass' => EditConnection::class])
+        ->callAction(TestAction::make('syncNow')->table($mapping))
+        ->assertNotified('Synced');
+
+    expect(ScannerAttendee::orderBy('id')->pluck('name')->all())->toBe(['Ada King Lovelace', 'Grace Hopper'])
+        ->and(ScannerAttendee::pluck('event_id')->unique()->all())->toBe([7]);
 });

@@ -14,13 +14,10 @@ code.
 
 ## Install
 
-In each app, provider or consumer:
+In each app, provider or consumer. No code changes:
 
-1. `composer require joelinit1/event-connect`, then `php artisan migrate`.
-2. Register the plugin on a Filament panel that has database notifications
-   (`->plugin(\Jma\Connect\ConnectPlugin::make())->databaseNotifications()`).
-   This is the only code change.
-3. Set `.env`:
+1. `composer require joelinit1/event-connect:^0.2`, then `php artisan migrate`.
+2. Set `.env`:
 
    ```dotenv
    CONNECT_PROVIDER_ENABLED=true        # this app shares its attendees
@@ -28,16 +25,26 @@ In each app, provider or consumer:
    CONNECT_ADMIN_EMAILS=you@example.com # who can see the screens (comma-separated)
    ```
 
-4. Consumers only: the Laravel scheduler (`schedule:run` every minute) and a
-   queue worker must be running. The package schedules `connect:sync` hourly
-   by itself. Change that with `CONNECT_SCHEDULE` (a cron expression), or
-   set it empty to schedule it yourself.
+3. Consumers only: the Laravel scheduler (`schedule:run` every minute) must
+   be running. The package syncs every enabled mapping hourly by itself,
+   inside the scheduler, so no queue worker is needed. Change the timing
+   with `CONNECT_SCHEDULE` (a cron expression), or set it empty to schedule
+   `connect:sync` yourself.
+
+The screens appear on the app's default Filament panel. To use another
+panel, set `CONNECT_PANEL` to its ID. An app that registers
+`ConnectPlugin` on a panel itself keeps that, and nothing is added.
+
+Sanctum's `personal_access_tokens` table, which API client tokens need, is
+created by the migration if the app doesn't have it.
+
+Optional: `->databaseNotifications()` on the panel shows sync alerts in the
+bell. **Sync now** reports its result on screen either way.
 
 A host that defines the `connect.manage` Gate itself overrides
-`CONNECT_ADMIN_EMAILS`. Leave the provider `class` and consumer `sink` config
-unset to use the built-in table-driven versions described below. A host with
-its own `AttendeeProvider` or `AttendeeSink` class can still set them, and
-the table settings then go away from the screens.
+`CONNECT_ADMIN_EMAILS`. A host with its own `AttendeeProvider` or
+`AttendeeSink` class can still name it in a published `config/connect.php`,
+and the table settings then go away from the screens.
 
 ## Setting up a sync (no code)
 
@@ -58,13 +65,25 @@ the table settings then go away from the screens.
 1. **API Connections → New.** Enter the provider's URL and the token, then
    press **Test**.
 2. On the connection, open **Event mappings → New**. Pick the remote event and
-   the local destination table. Choose the **remote ID column**: a column
-   that stores the provider's attendee ID, so each attendee lands on the same
-   row every time. Add one, e.g. `external_id`, if the table has none.
-3. Press **Suggest from source**, check the rules, then save.
-4. **Preview** shows what the first remote attendees would become locally
-   (create, update or held, and why) before anything is written. Then use
-   **Sync now**.
+   the local table. If the table has an event column (e.g. `event_id`), it's
+   filled in. Then pick the **local event** from the dropdown, which lists the
+   rows that column points at by name.
+3. **Remote ID column** is optional. Leave it empty and the package remembers
+   which local row each attendee became, so the table needs no new column.
+   Set it only if the table already has one meant for another system's ID
+   (e.g. `external_ref`).
+4. Press **Suggest from source**, check the rules, then save.
+5. **Preview** really writes the first attendees to the table and then undoes
+   it, so each row's result (create, update, or held and why) is what a sync
+   will actually do, including the table's required columns and the app's own
+   rules. Nothing is kept, and no emails, notifications or jobs go out. Then
+   use **Sync now**, which runs straight away and shows the result.
+
+Rows are written through the app's own Eloquent model for the table when it
+has one (found in `app/Models`). So anything the app does when it creates a
+row itself, like generating a check-in token, a UUID or a QR code, filling
+defaults or soft deleting, happens for synced rows too. A table with no model
+is written directly.
 
 ### Field maps
 
@@ -89,15 +108,16 @@ On the wire, the named fields are `first_name`, `last_name`, `email`,
 no package release: send it as an extra.
 
 A field the source doesn't send leaves the local column alone. It is never
-blanked. Rows are matched on the remote ID (plus the event column, if set),
-never on email.
+blanked. Rows are matched on the remote ID column (plus the event column), or
+on the row the package recorded creating. Never on email.
 
 ## Seeing and fixing mis-mappings
 
 - **Preview** (on both sides): real rows through the current mapping, before
   saving or syncing.
 - **Held rows** (a tab on each connection): every attendee a sync couldn't
-  write, with the reason and exactly what the source sent. Fix the mapping,
+  write, with the reason in plain words (e.g. "Column 'event_id' needs a
+  value, but nothing writes one") and exactly what the source sent. Fix the mapping,
   then **Retry**: no resync is needed. A held row that later syncs cleanly
   resolves itself, and **Dismiss** clears one by hand.
 - **Field report** (per event mapping): how many attendees in the latest run
@@ -140,16 +160,21 @@ Other successful scheduled runs never notify anyone.
 
 ## Upgrading from 0.1.x
 
-- Run `php artisan migrate`. That adds `connect_attendee_sources` and
-  `connect_sync_issues`, adds destination and field-map columns to
-  `connect_sync_mappings` (making `local_event_id` nullable), and adds field
-  counts to `connect_sync_runs`.
-- `connect:sync` is now scheduled by the package. If the host schedules it
-  too, remove that line or set `CONNECT_SCHEDULE=`. Duplicates are harmless,
-  because a mapping already queued isn't queued twice.
-- Hosts with their own `AttendeeProvider`/`AttendeeSink` classes keep working
-  unchanged. To move a host onto the table-driven versions, set up its
-  sources or mappings on the screens, then remove the class from config.
+- `composer require joelinit1/event-connect:^0.2` (`^0.1` doesn't accept
+  0.2), then `php artisan migrate`. That adds `connect_attendee_sources`,
+  `connect_sync_issues` and `connect_row_links`, adds destination and
+  field-map columns to `connect_sync_mappings` (making `local_event_id`
+  nullable), and adds field counts to `connect_sync_runs`.
+- Hosts with their own `AttendeeProvider`/`AttendeeSink` class keep working
+  unchanged, because their published `config/connect.php` still names it. To
+  move to the screens, set up the sources or mappings there, then delete
+  `config/connect.php` (or set `class`/`sink` to `null` in it) and use the
+  `.env` settings above. A published config from 0.1 also lacks the `.env`
+  lookups, so its hard-coded `enabled` values win until it's removed.
+- `connect:sync` is now scheduled by the package, and runs syncs itself
+  rather than queuing them (`--queue` queues them as before). If the host
+  schedules it too, remove that line or set `CONNECT_SCHEDULE=`. Duplicates
+  are harmless.
 - Timestamps in source tables are read in the app's timezone (`UTC` by
   default), the same as Eloquent.
 
@@ -178,17 +203,26 @@ field newly required. Serve `/api/v2` alongside `/api/v1` until every consumer
 has moved over, and leave the `v1` fixture untouched.
 
 Package version numbers are separate from the API version. Tags have no `v`
-prefix. While the package is on `0.x`, consumers require `^0.1`, which accepts
-`0.1.*` only. That means additive releases are `0.1.x`, and `0.2.0` is
+prefix. While the package is on `0.x`, apps require `^0.2`, which accepts
+`0.2.*` only. That means additive releases are `0.2.x`, and `0.3.0` is
 reserved for breaking changes to the PHP API (contracts, config, migrations).
+The wire format didn't change in 0.2, so a 0.2 app and a 0.1 app still sync.
 
 ## Development
 
 ```bash
-composer test   # Pest: Unit, Feature and Screens (Filament) suites
+composer test   # Pest: Unit, Feature, Screens (Filament) and Install suites
 composer lint   # Pint
 ```
 
-`tests/Feature/EndToEndTest.php` runs a provider and a consumer with
-different table layouts in one app, configured only through what the screens
-save.
+The suite also runs on MySQL:
+
+```bash
+DB_CONNECTION=mysql DB_HOST=127.0.0.1 DB_DATABASE=event_connect_test DB_USERNAME=root DB_PASSWORD= composer test
+```
+
+`tests/Feature/EndToEndTest.php` and `tests/Feature/RealWorldTest.php` run a
+provider and a consumer with different table layouts in one app, configured
+only through what the screens save. RealWorldTest's tables are shaped like
+real apps: a single full-name column, an events table, and a check-in table
+whose model generates a required token.

@@ -2,12 +2,21 @@
 
 namespace Jma\Connect\Consumer\Sync;
 
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Queue;
 use Jma\Connect\Connect;
 use Jma\Connect\Consumer\Models\SyncMapping;
+use Jma\Connect\Consumer\Sinks\TableAttendeeSink;
+use Jma\Connect\Contracts\AttendeeSink;
 use Jma\Connect\Data\AttendeeData;
+use Jma\Connect\Enums\WriteResult;
 use Jma\Connect\Mapping\FieldMap;
+use Jma\Connect\Support\LocalTables;
 use Throwable;
 
 /**
@@ -37,18 +46,26 @@ final class MappingPreview
         $report = new FieldReport;
         $attendees->each(fn (AttendeeData $a) => $report->add($a));
 
-        $view['rows'] = $attendees->map(function (AttendeeData $attendee) use ($mapping, $ready) {
+        $results = $ready ? self::trialWrite($mapping, $attendees) : [];
+
+        $view['rows'] = $attendees->map(function (AttendeeData $attendee) use ($mapping, $results) {
             $row = ['remote id' => $attendee->id, ...$mapping->fieldMap()->apply($attendee->toArray())];
+            $row['→ result'] = $results[$attendee->id] ?? '—';
 
             try {
                 $attendee->assertValid();
-                $row['→ result'] = $ready ? (self::exists($mapping, $attendee) ? 'update' : 'create') : '—';
             } catch (Throwable $e) {
                 $row['→ result'] = 'held: '.$e->getMessage();
             }
 
             return array_map(fn ($v) => is_array($v) ? json_encode($v) : $v, $row);
         })->all();
+
+        if ($ready && $results !== []) {
+            $view['notes'][] = 'Each result comes from really writing the row to '
+                .(TableAttendeeSink::modelFor($mapping) ?? "table '{$mapping->target_table}'")
+                .' and then undoing it, so "create" and "update" will work for real. No emails, notifications or jobs were sent.';
+        }
 
         $view['columns'] = collect($view['rows'])->flatMap(fn (array $row) => array_keys($row))->unique()
             ->sortBy(fn (string $c) => $c === 'remote id' ? 0 : ($c === '→ result' ? 2 : 1))->values()->all();
@@ -151,12 +168,51 @@ final class MappingPreview
         return $view;
     }
 
-    private static function exists(SyncMapping $mapping, AttendeeData $attendee): bool
+    /**
+     * Writes each attendee with the real sink inside a transaction that is
+     * always rolled back, so the result reflects the app's model hooks and
+     * the table's constraints rather than a guess. Mail, notifications and
+     * jobs are faked meanwhile, so the app's hooks can't send anything.
+     *
+     * @param  Collection<int, AttendeeData>  $attendees
+     * @return array<string, string> remote id => result
+     */
+    private static function trialWrite(SyncMapping $mapping, Collection $attendees): array
     {
-        return DB::table($mapping->target_table)
-            ->where($mapping->target_key_column, $attendee->id)
-            ->when(filled($mapping->target_event_column), fn ($q) => $q->where($mapping->target_event_column, $mapping->local_event_id))
-            ->exists();
+        $sink = app(AttendeeSink::class);
+        $results = [];
+        $real = [Mail::getFacadeRoot(), Notification::getFacadeRoot(), Bus::getFacadeRoot(), Queue::getFacadeRoot()];
+
+        Mail::fake();
+        Notification::fake();
+        Bus::fake();
+        Queue::fake();
+        DB::beginTransaction();
+
+        try {
+            foreach ($attendees as $attendee) {
+                try {
+                    // A savepoint per row, as a failed statement aborts the
+                    // whole transaction on Postgres.
+                    $results[$attendee->id] = match (DB::transaction(fn () => $sink->write($mapping, $attendee))) {
+                        WriteResult::Created => 'create',
+                        WriteResult::Updated => 'update',
+                        WriteResult::Deleted => 'delete',
+                        WriteResult::Skipped => 'no change',
+                    };
+                } catch (Throwable $e) {
+                    $results[$attendee->id] = 'held: '.LocalTables::describe($e);
+                }
+            }
+        } finally {
+            DB::rollBack();
+            Mail::swap($real[0]);
+            Notification::swap($real[1]);
+            Bus::swap($real[2]);
+            Queue::swap($real[3]);
+        }
+
+        return $results;
     }
 
     /**

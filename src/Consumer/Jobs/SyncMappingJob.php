@@ -42,6 +42,18 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         $this->onQueue(config('connect.consumer.queue', 'default'));
     }
 
+    /**
+     * Runs a sync in this process rather than on the queue: no queue worker
+     * needed, and whoever asked sees the outcome straight away. A failure
+     * is recorded on the run (and alerted) rather than thrown.
+     */
+    public static function runNow(SyncMapping $mapping): ?SyncRun
+    {
+        rescue(fn () => static::dispatchSync($mapping));
+
+        return $mapping->runs()->latest('id')->first();
+    }
+
     public function uniqueId(): string
     {
         return (string) $this->mapping->id;

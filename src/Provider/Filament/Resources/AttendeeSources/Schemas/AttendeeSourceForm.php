@@ -61,7 +61,8 @@ class AttendeeSourceForm
                                 $set('id_column', $has('id'));
                                 $set('updated_at_column', $has('updated_at'));
                                 $set('deleted_at_column', $has('deleted_at'));
-                                $set('filter_column', null);
+                                $set('filter_column', $has('event_id'));
+                                $set('filter_value', null);
                             }),
                         Select::make('id_column')
                             ->label('Unique ID column')
@@ -69,15 +70,32 @@ class AttendeeSourceForm
                             ->options($columns)
                             ->required(),
                         Select::make('filter_column')
-                            ->label('Event column (optional)')
-                            ->helperText('Only if this table holds more than one event\'s attendees.')
+                            ->label('Event column')
+                            ->helperText('If this table holds more than one event\'s attendees, the column that says which event (usually event_id).')
                             ->options($columns)
-                            ->live(),
-                        TextInput::make('filter_value')
-                            ->label('Event value')
-                            ->helperText('Rows whose event column equals this are included.')
+                            ->live()
+                            ->afterStateUpdated(fn (Set $set) => $set('filter_value', null)),
+                        Select::make('filter_value')
+                            ->label('Event')
+                            ->helperText('Only this event\'s attendees are shared.')
+                            ->options(fn (Get $get) => self::eventChoices($get))
+                            ->searchable()
+                            ->live()
+                            ->afterStateUpdated(function (?string $state, Get $get, Set $set): void {
+                                $label = self::eventChoices($get)[$state] ?? null;
+
+                                if (blank($get('name')) && $label !== null) {
+                                    $set('name', preg_replace('/ \(#[^)]*\)$/', '', $label));
+                                }
+                            })
                             ->required(fn (Get $get) => filled($get('filter_column')))
-                            ->visible(fn (Get $get) => filled($get('filter_column'))),
+                            ->visible(fn (Get $get) => filled($get('filter_column')) && self::eventChoices($get) !== []),
+                        TextInput::make('filter_value')
+                            ->key('filter_value_typed')
+                            ->label('Event value')
+                            ->helperText('Rows whose event column equals this are shared.')
+                            ->required(fn (Get $get) => filled($get('filter_column')))
+                            ->visible(fn (Get $get) => filled($get('filter_column')) && self::eventChoices($get) === []),
                         Select::make('updated_at_column')
                             ->label('Last-updated column')
                             ->helperText('Lets syncs fetch only changed rows. Without it, every sync reads the whole table.')
@@ -103,6 +121,14 @@ class AttendeeSourceForm
                         ),
                     ]),
             ]);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function eventChoices(Get $get): array
+    {
+        return LocalTables::valueOptions($get('table_name'), $get('filter_column'));
     }
 
     /**

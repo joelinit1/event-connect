@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Jma\Connect\Consumer\Sinks\TableAttendeeSink;
 use Jma\Connect\Enums\SyncHealth;
 use Jma\Connect\Enums\SyncRunStatus;
 use Jma\Connect\Mapping\FieldMap;
@@ -66,8 +67,10 @@ class SyncMapping extends Model
 
         $problems = [];
 
-        if (blank($this->target_key_column)) {
-            $problems[] = 'No remote ID column is set, so synced rows can\'t be matched up again. Edit the event mapping and choose one.';
+        // Without a remote ID column, rows are matched through connect_row_links
+        // on the local key, so the table needs one.
+        if (blank($this->target_key_column) && TableAttendeeSink::modelFor($this) === null && LocalTables::primaryKey($this->target_table) === null) {
+            $problems[] = "Table '{$this->target_table}' has no primary key, so choose a remote ID column to match rows on.";
         }
 
         foreach (['target_key_column', 'target_event_column'] as $setting) {
@@ -80,8 +83,11 @@ class SyncMapping extends Model
             $problems[] = "An event column is set ('{$this->target_event_column}') but no local event is chosen.";
         }
 
-        if ($this->on_delete === 'soft_delete' && ! in_array('deleted_at', $columns, true)) {
-            $problems[] = "Deletes are set to soft-delete, but '{$this->target_table}' has no deleted_at column.";
+        $model = TableAttendeeSink::modelFor($this);
+        $deletedAt = $model !== null && method_exists($model, 'getDeletedAtColumn') ? (new $model)->getDeletedAtColumn() : 'deleted_at';
+
+        if ($this->on_delete === 'soft_delete' && ! in_array($deletedAt, $columns, true)) {
+            $problems[] = "Deletes are set to soft-delete, but '{$this->target_table}' has no {$deletedAt} column.";
         }
 
         if ($this->fieldMap()->isEmpty()) {
@@ -108,6 +114,11 @@ class SyncMapping extends Model
     public function localEvent(): BelongsTo
     {
         return $this->belongsTo(config('connect.consumer.event_model') ?? self::class, 'local_event_id');
+    }
+
+    public function rowLinks(): HasMany
+    {
+        return $this->hasMany(RowLink::class);
     }
 
     public function issues(): HasMany

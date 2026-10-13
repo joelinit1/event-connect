@@ -67,13 +67,13 @@ class ConnectionsTable
                     ->action(function (Connection $record): void {
                         $mappings = $record->mappings()->where('enabled', true)->get();
 
-                        $mappings->each(fn ($mapping) => SyncMappingJob::dispatch($mapping, auth()->user()));
+                        if ($mappings->isEmpty()) {
+                            Notification::make()->title('Nothing to sync — add an event mapping first')->warning()->send();
 
-                        Notification::make()
-                            ->title($mappings->isEmpty() ? 'Nothing to sync — add an event mapping first' : "Queued {$mappings->count()} sync run(s)")
-                            ->body($mappings->isEmpty() ? null : SyncMappingsRelationManager::QUEUED_BODY)
-                            ->{$mappings->isEmpty() ? 'warning' : 'success'}()
-                            ->send();
+                            return;
+                        }
+
+                        $mappings->each(fn ($mapping) => SyncMappingsRelationManager::notifyRun(SyncMappingJob::runNow($mapping)));
                     }),
                 EditAction::make(),
                 DeleteAction::make(),

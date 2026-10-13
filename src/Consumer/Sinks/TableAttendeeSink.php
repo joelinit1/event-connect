@@ -2,20 +2,27 @@
 
 namespace Jma\Connect\Consumer\Sinks;
 
-use Illuminate\Database\Query\Builder;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Jma\Connect\Consumer\Models\RowLink;
 use Jma\Connect\Consumer\Models\SyncMapping;
 use Jma\Connect\Contracts\AttendeeSink;
 use Jma\Connect\Data\AttendeeData;
 use Jma\Connect\Enums\WriteResult;
 use Jma\Connect\Exceptions\MappingProblem;
-use Jma\Connect\Support\LocalTables;
+use Jma\Connect\Support\GenericRow;
+use Jma\Connect\Support\LocalModels;
 
 /**
  * The sink used when the host doesn't name its own: writes each attendee
  * into the table chosen on its event mapping, through that mapping's field
- * map. Rows are matched on the remote ID column (plus the event column, if
- * set), never on email.
+ * map, and never matches on email.
+ *
+ * Rows are written through the app's own model for the table when it has
+ * one, so its hooks, casts and soft deletes apply exactly as when the app
+ * creates a row itself. A row is matched on the remote ID column if one is
+ * set, or else on the link recorded when the package created it.
  */
 class TableAttendeeSink implements AttendeeSink
 {
@@ -25,66 +32,133 @@ class TableAttendeeSink implements AttendeeSink
             throw new MappingProblem(implode(' ', $problems));
         }
 
-        $columns = LocalTables::columns($mapping->target_table);
-        $stamp = fn (array $values, string $column) => in_array($column, $columns, true) ? [...$values, $column => now()] : $values;
+        $existing = $this->find($mapping, $attendee->id);
 
         if ($attendee->isDeleted()) {
-            return $this->delete($mapping, $attendee, $stamp);
+            return $existing === null ? WriteResult::Skipped : $this->delete($mapping, $existing);
         }
 
-        $values = array_map(
-            fn (mixed $value) => is_array($value) ? json_encode($value) : $value,
-            $mapping->fieldMap()->apply($attendee->toArray()),
-        );
-
-        $existing = $this->match($mapping, $attendee)->first();
+        $row = $existing ?? $this->newRow($mapping);
+        $row->forceFill($this->values($mapping, $row, $attendee));
 
         if ($existing === null) {
-            $this->table($mapping)->insert($stamp($stamp([
-                ...$values,
+            $row->forceFill(array_filter([
                 $mapping->target_key_column => $attendee->id,
-                ...(filled($mapping->target_event_column) ? [$mapping->target_event_column => $mapping->local_event_id] : []),
-            ], 'created_at'), 'updated_at'));
-
-            return WriteResult::Created;
+                $mapping->target_event_column => $mapping->local_event_id,
+            ], fn ($value, $column) => filled($column), ARRAY_FILTER_USE_BOTH));
+        } elseif ($this->isTrashed($mapping, $row)) {
+            $row->{$this->deletedAtColumn($row)} = null;
         }
 
-        // Loose comparison: the database hands back '5' for a 5 written earlier.
-        $changed = array_filter($values, fn (mixed $value, string $column) => $existing->{$column} != $value, ARRAY_FILTER_USE_BOTH);
-
-        if ($mapping->on_delete === 'soft_delete' && ($existing->deleted_at ?? null) !== null) {
-            $changed['deleted_at'] = null;
-        }
-
-        if ($changed === []) {
+        if ($existing !== null && ! $row->isDirty()) {
             return WriteResult::Skipped;
         }
 
-        $this->match($mapping, $attendee)->update($stamp($changed, 'updated_at'));
+        $row->save();
 
-        return WriteResult::Updated;
+        if ($existing === null && blank($mapping->target_key_column)) {
+            RowLink::updateOrCreate(
+                ['sync_mapping_id' => $mapping->id, 'remote_id' => $attendee->id],
+                ['local_key' => (string) $row->getKey()],
+            );
+        }
+
+        return $existing === null ? WriteResult::Created : WriteResult::Updated;
     }
 
-    private function delete(SyncMapping $mapping, AttendeeData $attendee, callable $stamp): WriteResult
+    /**
+     * The local row this remote attendee was written to, trashed or not.
+     */
+    public function find(SyncMapping $mapping, string $remoteId): ?Model
     {
-        $affected = match ($mapping->on_delete) {
-            'ignore' => 0,
-            'soft_delete' => $this->match($mapping, $attendee)->whereNull('deleted_at')->update($stamp(['deleted_at' => now()], 'updated_at')),
-            default => $this->match($mapping, $attendee)->delete(),
-        };
+        if (filled($mapping->target_key_column)) {
+            return $this->query($mapping)
+                ->where($mapping->target_key_column, $remoteId)
+                ->when(filled($mapping->target_event_column), fn (Builder $query) => $query->where($mapping->target_event_column, $mapping->local_event_id))
+                ->first();
+        }
 
-        return $affected > 0 ? WriteResult::Deleted : WriteResult::Skipped;
+        $key = RowLink::where(['sync_mapping_id' => $mapping->id, 'remote_id' => $remoteId])->value('local_key');
+
+        return $key === null ? null : $this->query($mapping)->whereKey($key)->first();
     }
 
-    private function match(SyncMapping $mapping, AttendeeData $attendee): Builder
+    /**
+     * The app's model class for the destination, or null for a plain table.
+     *
+     * @return class-string<Model>|null
+     */
+    public static function modelFor(SyncMapping $mapping): ?string
     {
-        return $this->table($mapping)
-            ->where($mapping->target_key_column, $attendee->id)
-            ->when(filled($mapping->target_event_column), fn (Builder $query) => $query->where($mapping->target_event_column, $mapping->local_event_id));
+        return LocalModels::for($mapping->target_table);
     }
 
-    private function table(SyncMapping $mapping): Builder
+    private function delete(SyncMapping $mapping, Model $row): WriteResult
     {
-        return DB::table($mapping->target_table);
+        if ($mapping->on_delete === 'ignore' || $this->isTrashed($mapping, $row)) {
+            return WriteResult::Skipped;
+        }
+
+        if ($mapping->on_delete === 'soft_delete' && ! $this->usesSoftDeletes($row)) {
+            $row->forceFill(['deleted_at' => $row->freshTimestampString()])->save();
+        } else {
+            // The app's own delete: a model with SoftDeletes soft-deletes.
+            $row->delete();
+        }
+
+        return WriteResult::Deleted;
+    }
+
+    /**
+     * Mapped values, with arrays left as arrays where the model casts the
+     * column (it encodes them itself) and JSON-encoded everywhere else.
+     *
+     * @return array<string, mixed>
+     */
+    private function values(SyncMapping $mapping, Model $row, AttendeeData $attendee): array
+    {
+        $values = $mapping->fieldMap()->apply($attendee->toArray());
+
+        foreach ($values as $column => $value) {
+            if (is_array($value) && ! $row->hasCast($column)) {
+                $values[$column] = json_encode($value);
+            }
+        }
+
+        return $values;
+    }
+
+    private function newRow(SyncMapping $mapping): Model
+    {
+        $class = self::modelFor($mapping);
+
+        return $class !== null ? new $class : GenericRow::forTable($mapping->target_table, $mapping->target_key_column);
+    }
+
+    /**
+     * Global scopes off: a tenant or "active only" scope must not hide a
+     * row the sync wrote, or it would write it a second time.
+     */
+    private function query(SyncMapping $mapping): Builder
+    {
+        return $this->newRow($mapping)->newQueryWithoutScopes();
+    }
+
+    private function isTrashed(SyncMapping $mapping, Model $row): bool
+    {
+        $column = $this->deletedAtColumn($row);
+
+        return ($this->usesSoftDeletes($row) || $mapping->on_delete === 'soft_delete')
+            && $row->getAttribute($column) !== null;
+    }
+
+    private function usesSoftDeletes(Model $row): bool
+    {
+        return in_array(SoftDeletes::class, class_uses_recursive($row), true);
+    }
+
+    private function deletedAtColumn(Model $row): string
+    {
+        return $this->usesSoftDeletes($row) ? $row->getDeletedAtColumn() : 'deleted_at';
     }
 }

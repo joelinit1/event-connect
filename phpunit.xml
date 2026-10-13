@@ -14,6 +14,9 @@
         <testsuite name="Screens">
             <directory>tests/Screens</directory>
         </testsuite>
+        <testsuite name="Install">
+            <directory>tests/Install</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>

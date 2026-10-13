@@ -128,7 +128,7 @@ it('holds rows it cannot write, with the payload and a reason, then resolves the
         ->and($issues->pluck('remote_id')->all())->toBe(['a1', 'a2'])
         ->and($issues[0]->reason)->toContain("The field map writes 'organisation', which isn't a column on 'guests'.")
         ->and($issues[0]->occurrences)->toBe(2)
-        ->and($issues[0]->payload)->toBe(ada())
+        ->and($issues[0]->payload)->toEqual(ada())
         ->and($issues[1]->reason)->toBe('Missing required first_name.')
         ->and($mapping->fresh()->health())->toBe(SyncHealth::Failing);
 
@@ -172,7 +172,7 @@ it('records field coverage on each run', function () {
     $run = $mapping->runs()->sole();
 
     expect($run->row_count)->toBe(2)
-        ->and($run->coverage['fields'])->toBe([
+        ->and($run->coverage['fields'])->toEqual([
             'email' => 1, 'extra.dietary' => 2, 'first_name' => 2, 'last_name' => 2, 'table' => 2,
         ])
         ->and($run->warnings)->toBe([])

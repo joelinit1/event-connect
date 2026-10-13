@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Queue;
 use Jma\Connect\Consumer\Jobs\SyncMappingJob;
 use Jma\Connect\Consumer\Models\Connection;
@@ -15,23 +16,32 @@ beforeEach(function () {
     $this->disabled = $connection->mappings()->create(['remote_event_id' => '3', 'remote_event_name' => 'C', 'local_event_id' => 12, 'enabled' => false]);
 });
 
-it('queues one job per enabled mapping', function () {
+it('runs each enabled mapping in its own process by default, needing no queue worker', function () {
+    Bus::fake();
+
     $this->artisan('connect:sync')->assertSuccessful();
+
+    Bus::assertDispatchedSyncTimes(SyncMappingJob::class, 2);
+    Bus::assertNotDispatchedSync(SyncMappingJob::class, fn (SyncMappingJob $job) => $job->mapping->is($this->disabled));
+});
+
+it('queues one job per enabled mapping with --queue', function () {
+    $this->artisan('connect:sync', ['--queue' => true])->assertSuccessful();
 
     Queue::assertPushed(SyncMappingJob::class, 2);
     Queue::assertNotPushed(SyncMappingJob::class, fn (SyncMappingJob $job) => $job->mapping->is($this->disabled));
 });
 
 it('can be limited to a single mapping', function () {
-    $this->artisan('connect:sync', ['--mapping' => $this->alsoEnabled->id])->assertSuccessful();
+    $this->artisan('connect:sync', ['--mapping' => $this->alsoEnabled->id, '--queue' => true])->assertSuccessful();
 
     Queue::assertPushed(SyncMappingJob::class, 1);
     Queue::assertPushed(SyncMappingJob::class, fn (SyncMappingJob $job) => $job->mapping->is($this->alsoEnabled));
 });
 
 it('does not queue the same mapping twice while one is already waiting', function () {
-    $this->artisan('connect:sync', ['--mapping' => $this->enabled->id])->assertSuccessful();
-    $this->artisan('connect:sync', ['--mapping' => $this->enabled->id])->assertSuccessful();
+    $this->artisan('connect:sync', ['--mapping' => $this->enabled->id, '--queue' => true])->assertSuccessful();
+    $this->artisan('connect:sync', ['--mapping' => $this->enabled->id, '--queue' => true])->assertSuccessful();
 
     Queue::assertPushed(SyncMappingJob::class, 1);
 });

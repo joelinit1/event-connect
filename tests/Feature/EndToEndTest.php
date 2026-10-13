@@ -91,7 +91,10 @@ it('syncs an event between two different table layouts using only screen setting
 
     expect($preview['problems'])->toBe([])
         ->and(collect($preview['rows'])->pluck('→ result')->all())->toBe(['create', 'create'])
-        ->and($preview['notes'])->toBe(['Sent by the source but not mapped to any column: extra.phone, extra.plus_one.']);
+        ->and($preview['notes'])->toContain('Sent by the source but not mapped to any column: extra.phone, extra.plus_one.');
+
+    // The preview's trial writes were undone.
+    expect(DB::table('guests')->count())->toBe(0);
 
     // Sync.
     SyncMappingJob::dispatchSync($mapping);

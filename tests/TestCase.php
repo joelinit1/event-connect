@@ -13,7 +13,7 @@ use Filament\Schemas\SchemasServiceProvider;
 use Filament\Support\SupportServiceProvider;
 use Filament\Tables\TablesServiceProvider;
 use Filament\Widgets\WidgetsServiceProvider;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Jma\Connect\ConnectServiceProvider;
 use Jma\Connect\Tests\Fixtures\RecordingSink;
 use Jma\Connect\Tests\Fixtures\StubAttendeeProvider;
@@ -23,7 +23,10 @@ use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
 {
-    use RefreshDatabase;
+    // Not RefreshDatabase: tests create tables, which on MySQL silently
+    // commits a wrapping transaction, and then the code under test (the
+    // preview's rolled-back trial write) wouldn't run as it does for real.
+    use DatabaseMigrations;
 
     protected function setUp(): void
     {
@@ -35,8 +38,10 @@ abstract class TestCase extends Orchestra
 
     protected function getPackageProviders($app): array
     {
+        // Same order as a real app's package discovery (filament/* before
+        // livewire/livewire): Filament rebinds Livewire's DataStore while
+        // registering, so Livewire has to register after it.
         return [
-            LivewireServiceProvider::class,
             BladeIconsServiceProvider::class,
             BladeHeroiconsServiceProvider::class,
             SupportServiceProvider::class,
@@ -48,6 +53,7 @@ abstract class TestCase extends Orchestra
             ActionsServiceProvider::class,
             NotificationsServiceProvider::class,
             FilamentServiceProvider::class,
+            LivewireServiceProvider::class,
             SanctumServiceProvider::class,
             ConnectServiceProvider::class,
         ];
@@ -59,10 +65,5 @@ abstract class TestCase extends Orchestra
         $app['config']->set('connect.provider.class', StubAttendeeProvider::class);
         $app['config']->set('connect.consumer.enabled', true);
         $app['config']->set('connect.consumer.sink', RecordingSink::class);
-    }
-
-    protected function defineDatabaseMigrations(): void
-    {
-        $this->loadMigrationsFrom(__DIR__.'/../vendor/laravel/sanctum/database/migrations');
     }
 }

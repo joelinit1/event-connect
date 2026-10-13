@@ -7,6 +7,7 @@ use Jma\Connect\Consumer\Models\SyncMapping;
 use Jma\Connect\Consumer\Models\SyncRun;
 use Jma\Connect\Contracts\AttendeeSink;
 use Jma\Connect\Data\AttendeeData;
+use Jma\Connect\Support\LocalTables;
 use Throwable;
 
 /**
@@ -42,7 +43,7 @@ final class RowWriter
 
             $this->counts[$this->sink->write($this->mapping, $attendee)->value]++;
         } catch (Throwable $e) {
-            $this->hold($attendee, $e->getMessage());
+            $this->hold($attendee, LocalTables::describe($e));
 
             return false;
         }

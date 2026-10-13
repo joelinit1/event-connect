@@ -26,12 +26,16 @@ use Illuminate\Support\Facades\Cache;
 use Jma\Connect\Connect;
 use Jma\Connect\Consumer\Jobs\SyncMappingJob;
 use Jma\Connect\Consumer\Models\Connection;
+use Jma\Connect\Consumer\Models\SyncIssue;
 use Jma\Connect\Consumer\Models\SyncMapping;
+use Jma\Connect\Consumer\Models\SyncRun;
 use Jma\Connect\Consumer\Sync\MappingPreview;
 use Jma\Connect\Consumer\Sync\RetryHeldRows;
 use Jma\Connect\Data\EventData;
+use Jma\Connect\Enums\SyncRunStatus;
 use Jma\Connect\Filament\Components\FieldMapRepeater;
 use Jma\Connect\Mapping\Suggest;
+use Jma\Connect\Support\LocalModels;
 use Jma\Connect\Support\LocalTables;
 
 class SyncMappingsRelationManager extends RelationManager
@@ -39,8 +43,6 @@ class SyncMappingsRelationManager extends RelationManager
     protected static string $relationship = 'mappings';
 
     protected static ?string $title = 'Event mappings';
-
-    public const QUEUED_BODY = 'The result will appear in your notifications when it finishes.';
 
     /** Columns that usually hold another system's ID, tried in order. */
     private const KEY_COLUMN_GUESSES = ['remote_id', 'external_id', 'external_ref', 'source_id', 'connect_id', 'remote_ref', 'sync_id'];
@@ -60,11 +62,13 @@ class SyncMappingsRelationManager extends RelationManager
                             ->options(fn () => $this->remoteEventOptions())
                             ->searchable()
                             ->live()
-                            ->required(),
-                        $this->localEventField(),
+                            ->required()
+                            ->columnSpan(2),
                         Toggle::make('enabled')
                             ->inline(false)
                             ->default(true),
+                        // Hosts with their own sink choose the local event here.
+                        ...(Connect::usesBuiltInSink() ? [] : [$this->localEventField()]),
                     ]),
                 Section::make('Destination')
                     ->description('The local table these attendees are written into.')
@@ -81,16 +85,31 @@ class SyncMappingsRelationManager extends RelationManager
                                 $columns = LocalTables::columns($state);
                                 $set('target_key_column', collect(self::KEY_COLUMN_GUESSES)->first(fn ($c) => in_array($c, $columns, true)));
                                 $set('target_event_column', collect(['event_id'])->first(fn ($c) => in_array($c, $columns, true)));
-                            }),
+                                $set('local_event_id', null);
+                            })
+                            ->helperText(fn (Get $get) => ($model = LocalModels::for($get('target_table')))
+                                ? "Written through {$model}, so the app's own rules (generated codes, defaults) apply."
+                                : null),
                         Select::make('target_key_column')
-                            ->label('Remote ID column')
-                            ->helperText('Stores the other app\'s attendee ID, so each attendee is matched to the same row every sync. Add a column (e.g. external_id) if the table has none.')
-                            ->options($columns)
-                            ->required(),
-                        Select::make('target_event_column')
-                            ->label('Event column (optional)')
-                            ->helperText('Only if this table holds more than one event\'s attendees: set to the local event on write, and used to match rows.')
+                            ->label('Remote ID column (optional)')
+                            ->helperText('A column to store the other app\'s attendee ID in, if the table has one (e.g. external_ref). Leave empty and the sync remembers which row each attendee became by itself.')
                             ->options($columns),
+                        Select::make('target_event_column')
+                            ->label('Event column')
+                            ->helperText('If this table holds more than one event\'s attendees, the column that says which event (usually event_id).')
+                            ->options($columns)
+                            ->live()
+                            ->afterStateUpdated(fn (Set $set) => $set('local_event_id', null)),
+                        $this->localEventField()
+                            ->visible(fn (Get $get) => filled($get('target_event_column')) && $this->localEventChoices($get) !== [])
+                            ->required(fn (Get $get) => filled($get('target_event_column'))),
+                        // Nothing to choose from (no events table, no rows yet): type it.
+                        TextInput::make('local_event_id')
+                            ->key('local_event_id_typed')
+                            ->label('Local event')
+                            ->helperText('The value written to the event column for every attendee synced by this mapping.')
+                            ->visible(fn (Get $get) => filled($get('target_event_column')) && $this->localEventChoices($get) === [])
+                            ->required(fn (Get $get) => filled($get('target_event_column'))),
                         Select::make('on_delete')
                             ->label('When the source deletes an attendee')
                             ->options(SyncMapping::ON_DELETE)
@@ -173,11 +192,7 @@ class SyncMappingsRelationManager extends RelationManager
                     ->label('Sync now')
                     ->icon(Heroicon::ArrowPath)
                     ->tooltip('Fetch attendees changed since the last sync, same as the hourly run.')
-                    ->action(function (SyncMapping $record): void {
-                        SyncMappingJob::dispatch($record, auth()->user());
-
-                        Notification::make()->title('Sync queued')->body(self::QUEUED_BODY)->success()->send();
-                    }),
+                    ->action(fn (SyncMapping $record) => self::notifyRun(SyncMappingJob::runNow($record))),
                 ActionGroup::make([
                     Action::make('fieldReport')
                         ->label('Field report')
@@ -203,9 +218,7 @@ class SyncMappingsRelationManager extends RelationManager
                         ->action(function (SyncMapping $record): void {
                             $record->update(['cursor' => null]);
 
-                            SyncMappingJob::dispatch($record, auth()->user());
-
-                            Notification::make()->title('Full resync queued')->body(self::QUEUED_BODY)->success()->send();
+                            self::notifyRun(SyncMappingJob::runNow($record));
                         }),
                     EditAction::make()
                         ->modalWidth(Width::SevenExtraLarge)
@@ -213,6 +226,33 @@ class SyncMappingsRelationManager extends RelationManager
                     DeleteAction::make(),
                 ]),
             ]);
+    }
+
+    public static function notifyRun(?SyncRun $run): void
+    {
+        if ($run === null) {
+            return;
+        }
+
+        $counts = "{$run->created} created, {$run->updated} updated, {$run->deleted} deleted, {$run->skipped} unchanged";
+        $held = SyncIssue::where('sync_run_id', $run->id)->whereNull('resolved_at')->count();
+
+        Notification::make()
+            ->title(match ($run->status) {
+                SyncRunStatus::Failed => 'Sync failed',
+                SyncRunStatus::Partial => 'Synced, but some rows are held',
+                default => 'Synced',
+            })
+            ->body($run->status === SyncRunStatus::Failed
+                ? implode(' ', array_slice($run->errors ?? [], -1))
+                : $counts.($held > 0 ? ". {$held} row(s) held: see Held rows for why." : '.'))
+            ->{match ($run->status) {
+                SyncRunStatus::Failed => 'danger',
+                SyncRunStatus::Partial => 'warning',
+                default => 'success',
+            }}()
+                ->persistent()
+                ->send();
     }
 
     /**
@@ -229,17 +269,35 @@ class SyncMappingsRelationManager extends RelationManager
 
     private function localEventField(): Select|TextInput
     {
-        if (blank(config('connect.consumer.event_model'))) {
+        if (filled(config('connect.consumer.event_model'))) {
+            return Select::make('local_event_id')
+                ->label('Local event')
+                ->options(fn () => $this->localEventOptions())
+                ->searchable();
+        }
+
+        if (! Connect::usesBuiltInSink()) {
             return TextInput::make('local_event_id')
                 ->label('Local event ID (optional)')
-                ->helperText('Written to the event column, if you set one below.')
                 ->integer();
         }
 
+        // The rows the event column points at, e.g. this app's events table.
         return Select::make('local_event_id')
             ->label('Local event')
-            ->options(fn () => $this->localEventOptions())
+            ->helperText('Every attendee synced by this mapping is written with this event.')
+            ->options(fn (Get $get) => $this->localEventChoices($get))
             ->searchable();
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function localEventChoices(Get $get): array
+    {
+        return filled(config('connect.consumer.event_model'))
+            ? $this->localEventOptions()
+            : LocalTables::valueOptions($get('target_table'), $get('target_event_column'));
     }
 
     /**

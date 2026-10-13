@@ -19,6 +19,13 @@ return [
     'admin_emails' => env('CONNECT_ADMIN_EMAILS', ''),
 
     /*
+     * The Filament panel (by ID) the screens are added to. Null means the
+     * app's default panel. Ignored if the host registers ConnectPlugin on a
+     * panel itself.
+     */
+    'panel' => env('CONNECT_PANEL'),
+
+    /*
      * Provider mode: expose this app's events and attendees at
      * /api/v1/events and /api/v1/events/{id}/attendees, authenticated by
      * Sanctum tokens issued to ApiClient records from the Filament panel.
@@ -48,9 +55,10 @@ return [
         // field map set on each event mapping.
         'sink' => null,
 
-        // Cron expression for queuing every enabled mapping. Null leaves
+        // Cron expression for syncing every enabled mapping. Null leaves
         // scheduling to the host (`connect:sync`). Needs the host's
-        // scheduler (`schedule:run`) and a queue worker running.
+        // scheduler (`schedule:run`); runs happen in the scheduler's own
+        // process, so no queue worker is needed.
         'schedule' => env('CONNECT_SCHEDULE', '0 * * * *'),
 
         // Optional: scope connections to a tenant/client model. When set,
@@ -83,6 +91,11 @@ return [
         // (after its retries). Null means nobody beyond whoever clicked
         // "Sync now", who is always told how their own run went.
         'alert_recipients' => null,
+
+        // Model classes to consider, beyond those found in app/Models, when
+        // looking for the app's own model for a destination table. Rows are
+        // written through that model so its hooks and casts apply.
+        'models' => [],
 
         // driver name => class implementing Jma\Connect\Contracts\Source.
         'drivers' => [
