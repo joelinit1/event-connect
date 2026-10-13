@@ -12,7 +12,7 @@ class SyncRun extends Model
 
     protected $table = 'connect_sync_runs';
 
-    protected $fillable = ['sync_mapping_id', 'status', 'started_at', 'finished_at', 'created', 'updated', 'deleted', 'skipped', 'errors'];
+    protected $fillable = ['sync_mapping_id', 'status', 'started_at', 'finished_at', 'created', 'updated', 'deleted', 'skipped', 'row_count', 'coverage', 'errors', 'warnings'];
 
     protected function casts(): array
     {
@@ -21,6 +21,8 @@ class SyncRun extends Model
             'started_at' => 'immutable_datetime',
             'finished_at' => 'immutable_datetime',
             'errors' => 'array',
+            'coverage' => 'array',
+            'warnings' => 'array',
         ];
     }
 

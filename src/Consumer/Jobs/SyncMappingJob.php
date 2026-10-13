@@ -9,9 +9,12 @@ use Illuminate\Foundation\Queue\Queueable;
 use Jma\Connect\Consumer\Models\SyncMapping;
 use Jma\Connect\Consumer\Models\SyncRun;
 use Jma\Connect\Consumer\Notifications\SyncRunNotification;
+use Jma\Connect\Consumer\Sync\FieldReport;
+use Jma\Connect\Consumer\Sync\RowWriter;
 use Jma\Connect\Contracts\AttendeeSink;
 use Jma\Connect\Contracts\SyncAlertRecipients;
 use Jma\Connect\Enums\SyncRunStatus;
+use Jma\Connect\Support\LocalTables;
 use Throwable;
 
 /**
@@ -20,8 +23,11 @@ use Throwable;
  * fresh request (which would otherwise sit behind a stale 10-minute lock).
  *
  * $requestedBy is whoever clicked "Sync now" (null for scheduled runs): they
- * get the outcome in their notification bell. A run that fails for good also
- * alerts the host's SyncAlertRecipients, scheduled or not.
+ * get the outcome in their notification bell. A run that fails for good, or
+ * whose field report raises a warning the previous run didn't, also alerts
+ * the host's SyncAlertRecipients, scheduled or not.
+ *
+ * Rows that can't be written are held (see SyncIssue) rather than dropped.
  */
 class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
@@ -53,6 +59,10 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
     {
         $mapping = $this->mapping->fresh(['connection']);
 
+        // A long-running worker would otherwise keep column lists from
+        // before someone altered a table.
+        LocalTables::flush();
+
         // Captured before the first request so anything changed mid-run
         // falls inside the next run's window.
         $startedAt = now()->toImmutable();
@@ -62,47 +72,57 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
             'started_at' => $startedAt,
         ]);
 
-        $counts = ['created' => 0, 'updated' => 0, 'deleted' => 0, 'skipped' => 0];
-        $errors = [];
+        $writer = new RowWriter($sink, $mapping, $run);
+        $report = new FieldReport;
 
         try {
             $since = $mapping->cursor?->subMinutes((int) config('connect.consumer.cursor_overlap_minutes', 5));
 
             foreach ($mapping->connection->source()->attendees($mapping->remote_event_id, $since) as $attendee) {
-                try {
-                    $attendee->assertValid();
-
-                    $counts[$sink->write($mapping, $attendee)->value]++;
-                } catch (Throwable $e) {
-                    if (count($errors) < SyncRun::MAX_ERRORS) {
-                        $errors[] = "[{$attendee->id}] {$e->getMessage()}";
-                    }
-                }
+                $report->add($attendee);
+                $writer->write($attendee);
             }
         } catch (Throwable $e) {
             $run->update([
-                ...$counts,
+                ...$writer->counts,
                 'status' => SyncRunStatus::Failed,
                 'finished_at' => now(),
-                'errors' => [...$errors, $e->getMessage()],
+                'row_count' => $report->rows,
+                'coverage' => $report->toArray(),
+                'errors' => [...$writer->errors, $e->getMessage()],
             ]);
 
             throw $e;
         }
 
+        $previousWarnings = $mapping->runs()->whereKeyNot($run->id)->latest('id')->first()?->warnings ?? [];
+        $warnings = $report->warnings($mapping);
+
         $run->update([
-            ...$counts,
-            'status' => $errors === [] ? SyncRunStatus::Succeeded : SyncRunStatus::Partial,
+            ...$writer->counts,
+            'status' => $writer->held === 0 ? SyncRunStatus::Succeeded : SyncRunStatus::Partial,
             'finished_at' => now(),
-            'errors' => $errors,
+            'row_count' => $report->rows,
+            'coverage' => $report->toArray(),
+            'errors' => $writer->errors,
+            'warnings' => $warnings,
         ]);
 
-        // Advance even after row errors: they're recorded on the run for a
-        // human to act on, whereas holding the cursor back would re-pull
-        // the whole window forever for one bad row.
-        $mapping->update(['cursor' => $startedAt]);
+        // Advance even after row errors: those rows are held for a human to
+        // fix and retry, whereas holding the cursor back would re-pull the
+        // whole window forever for one bad row.
+        $mapping->update([
+            'cursor' => $startedAt,
+            'seen_fields' => array_values(array_unique([...$mapping->seen_fields ?? [], ...array_keys($report->filled)])),
+        ]);
 
-        if ($this->requestedBy !== null) {
+        // New field-map warnings matter even on a scheduled run: they're
+        // how a silently broken mapping gets noticed.
+        $newWarnings = array_diff($warnings, $previousWarnings);
+
+        if ($newWarnings !== []) {
+            $this->notify([...$this->alertRecipients(), $this->requestedBy], $run);
+        } elseif ($this->requestedBy !== null) {
             $this->notify([$this->requestedBy], $run);
         }
     }

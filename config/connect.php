@@ -3,15 +3,20 @@
 use Jma\Connect\Consumer\Sources\SuiteSource;
 
 /*
+ * Everything here can be set from .env, so installing needs no code beyond
+ * registering ConnectPlugin on a Filament panel.
+ *
  * Every Filament screen this package registers is gated by the
- * `connect.manage` Gate ability. Hosts define it in a service provider:
+ * `connect.manage` Gate ability. Hosts may define it in a service provider:
  *
  *     Gate::define('connect.manage', fn (User $user) => $user->is_super_admin);
  *
- * Undefined means denied. Keep authorization out of this file so it stays
- * cacheable by `config:cache`.
+ * If they don't, users whose email is listed in CONNECT_ADMIN_EMAILS
+ * (comma-separated) are allowed and everyone else is denied.
  */
 return [
+
+    'admin_emails' => env('CONNECT_ADMIN_EMAILS', ''),
 
     /*
      * Provider mode: expose this app's events and attendees at
@@ -19,9 +24,11 @@ return [
      * Sanctum tokens issued to ApiClient records from the Filament panel.
      */
     'provider' => [
-        'enabled' => false,
+        'enabled' => (bool) env('CONNECT_PROVIDER_ENABLED', false),
 
-        // Class implementing Jma\Connect\Contracts\AttendeeProvider.
+        // Class implementing Jma\Connect\Contracts\AttendeeProvider. Null
+        // uses the built-in TableAttendeeProvider, which serves whatever is
+        // set up on the Attendee Sources screen.
         'class' => null,
 
         // Optional: scope API clients to a tenant/client model.
@@ -34,10 +41,17 @@ return [
      * one via Connections → SyncMappings → queued SyncMappingJob runs.
      */
     'consumer' => [
-        'enabled' => false,
+        'enabled' => (bool) env('CONNECT_CONSUMER_ENABLED', false),
 
-        // Class implementing Jma\Connect\Contracts\AttendeeSink.
+        // Class implementing Jma\Connect\Contracts\AttendeeSink. Null uses
+        // the built-in TableAttendeeSink, which writes into the table and
+        // field map set on each event mapping.
         'sink' => null,
+
+        // Cron expression for queuing every enabled mapping. Null leaves
+        // scheduling to the host (`connect:sync`). Needs the host's
+        // scheduler (`schedule:run`) and a queue worker running.
+        'schedule' => env('CONNECT_SCHEDULE', '0 * * * *'),
 
         // Optional: scope connections to a tenant/client model. When set,
         // the event model is expected to carry a column (event_tenant_key)
@@ -46,11 +60,14 @@ return [
         'tenant_label' => 'name',
         'event_tenant_key' => 'tenant_id',
 
-        // The local model a remote event is mapped onto.
+        // Optional: the local model a remote event is mapped onto, offered
+        // as a dropdown on the event mapping screen. Without it, the local
+        // event is a plain ID, which only matters if the destination table
+        // holds several events' attendees in one table.
         'event_model' => null,
         'event_label' => 'name',
 
-        'queue' => 'default',
+        'queue' => env('CONNECT_QUEUE', 'default'),
 
         // Re-read this many minutes before the last cursor so records
         // changed while a long run was in flight are never missed.

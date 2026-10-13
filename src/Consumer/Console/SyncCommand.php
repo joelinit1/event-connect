@@ -32,7 +32,9 @@ class SyncCommand extends Command
         foreach ($mappings as $mapping) {
             SyncMappingJob::dispatch($mapping);
 
-            $this->line("Queued [{$mapping->connection->name}] {$mapping->remote_event_name} → local event #{$mapping->local_event_id}");
+            $destination = $mapping->target_table ?? "local event #{$mapping->local_event_id}";
+
+            $this->line("Queued [{$mapping->connection->name}] {$mapping->remote_event_name} → {$destination}");
         }
 
         $this->comment('A mapping already waiting in the queue is not queued a second time.');

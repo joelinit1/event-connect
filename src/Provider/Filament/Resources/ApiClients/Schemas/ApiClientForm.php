@@ -15,12 +15,15 @@ class ApiClientForm
                 TextInput::make('name')
                     ->helperText('Which app this token is for, e.g. "Seating Plan (production)".')
                     ->required(),
-                Select::make('tenant_id')
-                    ->label('Client')
-                    ->relationship('tenant', config('connect.provider.tenant_label', 'name'))
-                    ->searchable()
-                    ->preload()
-                    ->visible(fn () => filled(config('connect.provider.tenant_model'))),
+                // Only when the host has tenants: a hidden relationship field still
+                // loads its relation, which has no model class without one.
+                ...(filled(config('connect.provider.tenant_model')) ? [
+                    Select::make('tenant_id')
+                        ->label('Client')
+                        ->relationship('tenant', config('connect.provider.tenant_label', 'name'))
+                        ->searchable()
+                        ->preload(),
+                ] : []),
                 ...TokenFields::components(),
             ]);
     }

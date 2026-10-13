@@ -15,6 +15,7 @@ enum SyncHealth: string implements HasColor, HasDescription, HasLabel
 {
     case Off = 'off';
     case Healthy = 'healthy';
+    case Attention = 'attention';
     case Overdue = 'overdue';
     case Failing = 'failing';
 
@@ -33,6 +34,7 @@ enum SyncHealth: string implements HasColor, HasDescription, HasLabel
         return match ($this) {
             self::Off => 'Off',
             self::Healthy => 'Healthy',
+            self::Attention => 'Needs attention',
             self::Overdue => 'Overdue',
             self::Failing => 'Failing',
         };
@@ -43,6 +45,7 @@ enum SyncHealth: string implements HasColor, HasDescription, HasLabel
         return match ($this) {
             self::Off => 'gray',
             self::Healthy => 'success',
+            self::Attention => 'info',
             self::Overdue => 'warning',
             self::Failing => 'danger',
         };
@@ -54,7 +57,8 @@ enum SyncHealth: string implements HasColor, HasDescription, HasLabel
             self::Off => 'Syncing is switched off for this event.',
             self::Healthy => 'Syncing on schedule.',
             self::Overdue => 'No successful sync recently — the scheduler or queue worker may have stopped.',
-            self::Failing => 'The last sync failed or had row errors — see Sync history.',
+            self::Attention => 'Syncing, but the field report flagged something — e.g. a mapped field the source stopped sending, or a new one nobody has mapped.',
+            self::Failing => 'The last sync failed, or rows are held — see Held rows and Sync history.',
         };
     }
 }

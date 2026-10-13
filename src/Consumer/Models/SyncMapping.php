@@ -9,19 +9,92 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Jma\Connect\Enums\SyncHealth;
 use Jma\Connect\Enums\SyncRunStatus;
+use Jma\Connect\Mapping\FieldMap;
+use Jma\Connect\Support\LocalTables;
 
 class SyncMapping extends Model
 {
     protected $table = 'connect_sync_mappings';
 
-    protected $fillable = ['connection_id', 'remote_event_id', 'remote_event_name', 'local_event_id', 'enabled', 'cursor'];
+    public const ON_DELETE = [
+        'delete' => 'Delete the local row',
+        'soft_delete' => 'Set its deleted_at column',
+        'ignore' => 'Keep the local row',
+    ];
+
+    protected $fillable = [
+        'connection_id', 'remote_event_id', 'remote_event_name', 'local_event_id', 'enabled', 'cursor',
+        'target_table', 'target_key_column', 'target_event_column', 'on_delete', 'field_map', 'seen_fields',
+    ];
+
+    protected $attributes = [
+        'on_delete' => 'delete',
+    ];
 
     protected function casts(): array
     {
         return [
             'enabled' => 'boolean',
             'cursor' => 'immutable_datetime',
+            'field_map' => 'array',
+            'seen_fields' => 'array',
         ];
+    }
+
+    public function fieldMap(): FieldMap
+    {
+        return new FieldMap($this->field_map);
+    }
+
+    /**
+     * Problems with the destination settings that would make every row fail
+     * in the built-in TableAttendeeSink. Empty when it's ready to write.
+     *
+     * @return list<string>
+     */
+    public function destinationProblems(): array
+    {
+        if (blank($this->target_table)) {
+            return ['No destination table is set. Edit the event mapping and choose one.'];
+        }
+
+        $columns = LocalTables::columns($this->target_table);
+
+        if ($columns === []) {
+            return ["Destination table '{$this->target_table}' doesn't exist."];
+        }
+
+        $problems = [];
+
+        if (blank($this->target_key_column)) {
+            $problems[] = 'No remote ID column is set, so synced rows can\'t be matched up again. Edit the event mapping and choose one.';
+        }
+
+        foreach (['target_key_column', 'target_event_column'] as $setting) {
+            if (filled($this->{$setting}) && ! in_array($this->{$setting}, $columns, true)) {
+                $problems[] = "Column '{$this->{$setting}}' isn't on table '{$this->target_table}'.";
+            }
+        }
+
+        if (filled($this->target_event_column) && $this->local_event_id === null) {
+            $problems[] = "An event column is set ('{$this->target_event_column}') but no local event is chosen.";
+        }
+
+        if ($this->on_delete === 'soft_delete' && ! in_array('deleted_at', $columns, true)) {
+            $problems[] = "Deletes are set to soft-delete, but '{$this->target_table}' has no deleted_at column.";
+        }
+
+        if ($this->fieldMap()->isEmpty()) {
+            $problems[] = 'The field map is empty, so nothing would be written. Use "Suggest from source" to start one.';
+        }
+
+        foreach ($this->fieldMap()->targets() as $column) {
+            if (! in_array($column, $columns, true)) {
+                $problems[] = "The field map writes '{$column}', which isn't a column on '{$this->target_table}'.";
+            }
+        }
+
+        return $problems;
     }
 
     public function connection(): BelongsTo
@@ -29,9 +102,30 @@ class SyncMapping extends Model
         return $this->belongsTo(Connection::class);
     }
 
+    /**
+     * Only meaningful when the host sets connect.consumer.event_model.
+     */
     public function localEvent(): BelongsTo
     {
-        return $this->belongsTo(config('connect.consumer.event_model'), 'local_event_id');
+        return $this->belongsTo(config('connect.consumer.event_model') ?? self::class, 'local_event_id');
+    }
+
+    public function issues(): HasMany
+    {
+        return $this->hasMany(SyncIssue::class);
+    }
+
+    public function openIssues(): HasMany
+    {
+        return $this->issues()->whereNull('resolved_at');
+    }
+
+    /**
+     * Uses an eager-loaded open_issues_count (withCount(['openIssues'])) when present.
+     */
+    public function openIssueCount(): int
+    {
+        return $this->open_issues_count ?? $this->openIssues()->count();
     }
 
     public function runs(): HasMany
@@ -66,7 +160,8 @@ class SyncMapping extends Model
     }
 
     /**
-     * Eager-load latestRun and latestSuccessfulRun when calling this in a list.
+     * Eager-load latestRun and latestSuccessfulRun, and withCount openIssues,
+     * when calling this in a list.
      */
     public function health(): SyncHealth
     {
@@ -78,10 +173,20 @@ class SyncMapping extends Model
             return SyncHealth::Failing;
         }
 
+        // An incremental run won't re-read a row held earlier, so a clean
+        // latest run alone doesn't mean nothing is waiting.
+        if ($this->openIssueCount() > 0) {
+            return SyncHealth::Failing;
+        }
+
         $staleAfter = (int) config('connect.consumer.stale_after_minutes', 120);
 
         if ($this->lastSyncedAt() === null || $this->lastSyncedAt()->lt(now()->subMinutes($staleAfter))) {
             return SyncHealth::Overdue;
+        }
+
+        if (filled($this->latestRun?->warnings)) {
+            return SyncHealth::Attention;
         }
 
         return SyncHealth::Healthy;

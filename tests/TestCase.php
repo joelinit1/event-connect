@@ -2,10 +2,17 @@
 
 namespace Jma\Connect\Tests;
 
+use BladeUI\Heroicons\BladeHeroiconsServiceProvider;
+use BladeUI\Icons\BladeIconsServiceProvider;
 use Filament\Actions\ActionsServiceProvider;
 use Filament\FilamentServiceProvider;
+use Filament\Forms\FormsServiceProvider;
+use Filament\Infolists\InfolistsServiceProvider;
 use Filament\Notifications\NotificationsServiceProvider;
+use Filament\Schemas\SchemasServiceProvider;
 use Filament\Support\SupportServiceProvider;
+use Filament\Tables\TablesServiceProvider;
+use Filament\Widgets\WidgetsServiceProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Jma\Connect\ConnectServiceProvider;
 use Jma\Connect\Tests\Fixtures\RecordingSink;
@@ -30,7 +37,14 @@ abstract class TestCase extends Orchestra
     {
         return [
             LivewireServiceProvider::class,
+            BladeIconsServiceProvider::class,
+            BladeHeroiconsServiceProvider::class,
             SupportServiceProvider::class,
+            SchemasServiceProvider::class,
+            FormsServiceProvider::class,
+            TablesServiceProvider::class,
+            InfolistsServiceProvider::class,
+            WidgetsServiceProvider::class,
             ActionsServiceProvider::class,
             NotificationsServiceProvider::class,
             FilamentServiceProvider::class,

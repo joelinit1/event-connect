@@ -10,6 +10,16 @@ final readonly class AttendeeData
     public const REQUIRED = ['first_name'];
 
     /**
+     * Named attendee fields on the wire, besides id and the sync timestamps.
+     * Anything else travels under `extra`, which needs no package release:
+     * prefer `extra.<key>` over adding a field here.
+     */
+    public const WIRE_FIELDS = [
+        'first_name', 'last_name', 'email', 'company', 'job_title', 'table', 'seat', 'zone',
+        'booking_ref', 'category', 'check_in_code', 'checked_in_at',
+    ];
+
+    /**
      * @param  array<string, mixed>  $extra
      * @param  list<string>|null  $fields  Wire keys the source actually sent;
      *                                     null (built in code) means all of them.
@@ -87,6 +97,26 @@ final readonly class AttendeeData
         return $this->fields === null
             ? $data
             : array_intersect_key($data, array_flip(['id', ...$this->fields]));
+    }
+
+    /**
+     * The attendee fields the source sent, flattened for mapping and field
+     * reports: named fields by key and extras as `extra.<key>`. Leaves out
+     * id and the sync timestamps, which aren't attendee data.
+     *
+     * @return array<string, mixed>
+     */
+    public function values(): array
+    {
+        $data = $this->toArray();
+        $extra = is_array($data['extra'] ?? null) ? $data['extra'] : [];
+        unset($data['id'], $data['updated_at'], $data['deleted_at'], $data['extra']);
+
+        foreach ($extra as $key => $value) {
+            $data["extra.{$key}"] = $value;
+        }
+
+        return $data;
     }
 
     /**

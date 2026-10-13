@@ -19,7 +19,7 @@ class ConnectionsTable
     public static function configure(Table $table): Table
     {
         return $table
-            ->modifyQueryUsing(fn ($query) => $query->with(['mappings.latestRun', 'mappings.latestSuccessfulRun']))
+            ->modifyQueryUsing(fn ($query) => $query->with(Connection::eagerLoadHealth()))
             ->columns([
                 TextColumn::make('tenant.'.config('connect.consumer.tenant_label', 'name'))
                     ->label('Client')

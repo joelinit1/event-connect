@@ -20,15 +20,21 @@ class SyncRunNotification
         $event = $mapping->remote_event_name ?? "event {$mapping->remote_event_id}";
         $errorCount = count($run->errors ?? []);
 
-        $notification = match ($run->status) {
-            SyncRunStatus::Succeeded => Notification::make()
+        $warnings = $run->warnings ?? [];
+
+        $notification = match (true) {
+            $run->status === SyncRunStatus::Succeeded && $warnings !== [] => Notification::make()
+                ->warning()
+                ->title("Synced {$event}: check the field mapping")
+                ->body(self::counts($run).' '.str($warnings[0])->limit(200).(count($warnings) > 1 ? ' (+'.(count($warnings) - 1).' more)' : '')),
+            $run->status === SyncRunStatus::Succeeded => Notification::make()
                 ->success()
                 ->title("Synced {$event}")
                 ->body(self::counts($run)),
-            SyncRunStatus::Partial => Notification::make()
+            $run->status === SyncRunStatus::Partial => Notification::make()
                 ->warning()
-                ->title("Synced {$event} with {$errorCount} row error(s)")
-                ->body(self::counts($run)),
+                ->title("Synced {$event} with {$errorCount} held row(s)")
+                ->body(self::counts($run).' Held rows can be retried once the mapping is fixed.'),
             default => Notification::make()
                 ->danger()
                 ->title("Sync failed: {$event}")

@@ -6,6 +6,7 @@ use Filament\Contracts\Plugin;
 use Filament\Panel;
 use Jma\Connect\Consumer\Filament\Resources\Connections\ConnectionResource;
 use Jma\Connect\Provider\Filament\Resources\ApiClients\ApiClientResource;
+use Jma\Connect\Provider\Filament\Resources\AttendeeSources\AttendeeSourceResource;
 
 class ConnectPlugin implements Plugin
 {
@@ -23,6 +24,10 @@ class ConnectPlugin implements Plugin
     {
         if (config('connect.provider.enabled')) {
             $panel->resources([ApiClientResource::class]);
+
+            if (Connect::usesBuiltInProvider()) {
+                $panel->resources([AttendeeSourceResource::class]);
+            }
         }
 
         if (config('connect.consumer.enabled')) {

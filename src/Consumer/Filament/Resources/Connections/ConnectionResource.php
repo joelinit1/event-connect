@@ -12,6 +12,7 @@ use Filament\Tables\Table;
 use Jma\Connect\Consumer\Filament\Resources\Connections\Pages\CreateConnection;
 use Jma\Connect\Consumer\Filament\Resources\Connections\Pages\EditConnection;
 use Jma\Connect\Consumer\Filament\Resources\Connections\Pages\ListConnections;
+use Jma\Connect\Consumer\Filament\Resources\Connections\RelationManagers\SyncIssuesRelationManager;
 use Jma\Connect\Consumer\Filament\Resources\Connections\RelationManagers\SyncMappingsRelationManager;
 use Jma\Connect\Consumer\Filament\Resources\Connections\RelationManagers\SyncRunsRelationManager;
 use Jma\Connect\Consumer\Filament\Resources\Connections\Schemas\ConnectionForm;
@@ -54,6 +55,7 @@ class ConnectionResource extends Resource
     {
         return [
             SyncMappingsRelationManager::class,
+            SyncIssuesRelationManager::class,
             SyncRunsRelationManager::class,
         ];
     }

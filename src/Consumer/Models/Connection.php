@@ -41,6 +41,11 @@ class Connection extends Model
         return $this->hasManyThrough(SyncRun::class, SyncMapping::class);
     }
 
+    public function issues(): HasManyThrough
+    {
+        return $this->hasManyThrough(SyncIssue::class, SyncMapping::class);
+    }
+
     public function source(): Source
     {
         $class = config("connect.consumer.drivers.{$this->driver}")
@@ -51,12 +56,23 @@ class Connection extends Model
 
     /**
      * The worst of its mappings, so one stalled event is never hidden by the
-     * healthy ones. Eager-load mappings.latestRun and
-     * mappings.latestSuccessfulRun when calling this in a list.
+     * healthy ones. Eager-load mappings.latestRun,
+     * mappings.latestSuccessfulRun and mappings' openIssues count when
+     * calling this in a list (see eagerLoadHealth()).
      */
     public function health(): SyncHealth
     {
         return SyncHealth::worst($this->mappings->map(fn (SyncMapping $mapping) => $mapping->health()));
+    }
+
+    /**
+     * Everything health() needs, for a list of connections.
+     *
+     * @return array<string, \Closure>
+     */
+    public static function eagerLoadHealth(): array
+    {
+        return ['mappings' => fn ($query) => $query->withCount('openIssues')->with(['latestRun', 'latestSuccessfulRun'])];
     }
 
     public function lastSyncedAt(): ?CarbonImmutable

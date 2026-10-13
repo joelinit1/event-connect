@@ -14,13 +14,16 @@ class ConnectionForm
 
         return $schema
             ->components([
-                Select::make('tenant_id')
-                    ->label('Client')
-                    ->relationship('tenant', config('connect.consumer.tenant_label', 'name'))
-                    ->searchable()
-                    ->preload()
-                    ->required()
-                    ->visible(fn () => filled(config('connect.consumer.tenant_model'))),
+                // Only when the host has tenants: a hidden relationship field still
+                // loads its relation, which has no model class without one.
+                ...(filled(config('connect.consumer.tenant_model')) ? [
+                    Select::make('tenant_id')
+                        ->label('Client')
+                        ->relationship('tenant', config('connect.consumer.tenant_label', 'name'))
+                        ->searchable()
+                        ->preload()
+                        ->required(),
+                ] : []),
                 TextInput::make('name')
                     ->helperText('e.g. "LLS Registration"')
                     ->required(),
