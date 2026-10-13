@@ -191,7 +191,7 @@ class SyncMappingsRelationManager extends RelationManager
                 Action::make('syncNow')
                     ->label('Sync now')
                     ->icon(Heroicon::ArrowPath)
-                    ->tooltip('Fetch attendees changed since the last sync, same as the hourly run.')
+                    ->tooltip('Read every attendee from the source and update this table, same as the hourly run. Anyone the source no longer has is removed.')
                     ->action(fn (SyncMapping $record) => self::notifyRun(SyncMappingJob::runNow($record))),
                 ActionGroup::make([
                     Action::make('fieldReport')
@@ -214,11 +214,11 @@ class SyncMappingsRelationManager extends RelationManager
                         ->label('Full resync')
                         ->icon(Heroicon::OutlinedArrowUturnLeft)
                         ->requiresConfirmation()
-                        ->modalDescription('Forgets the cursor and re-reads every attendee for this event. Nothing is deleted.')
+                        ->modalDescription('Re-reads every attendee and removes anyone synced earlier who the source no longer has, even when that\'s most of them. A normal sync refuses that, in case the source is misconfigured.')
                         ->action(function (SyncMapping $record): void {
                             $record->update(['cursor' => null]);
 
-                            self::notifyRun(SyncMappingJob::runNow($record));
+                            self::notifyRun(SyncMappingJob::runNow($record, force: true));
                         }),
                     EditAction::make()
                         ->modalWidth(Width::SevenExtraLarge)

@@ -99,7 +99,7 @@ class ConnectServiceProvider extends ServiceProvider
 
         // Own limiter rather than the host's `api` one, which only exists
         // when the host registered routes/api.php.
-        RateLimiter::for('connect', fn (Request $request) => Limit::perMinute(120)->by($request->bearerToken() ?? $request->ip()));
+        RateLimiter::for('connect', fn (Request $request) => Limit::perMinute(600)->by($request->bearerToken() ?? $request->ip()));
 
         if (config('connect.provider.enabled')) {
             $this->loadRoutesFrom(__DIR__.'/Provider/routes.php');

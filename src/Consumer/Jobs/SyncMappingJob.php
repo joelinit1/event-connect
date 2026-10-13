@@ -9,10 +9,13 @@ use Illuminate\Foundation\Queue\Queueable;
 use Jma\Connect\Consumer\Models\SyncMapping;
 use Jma\Connect\Consumer\Models\SyncRun;
 use Jma\Connect\Consumer\Notifications\SyncRunNotification;
+use Jma\Connect\Consumer\Sinks\TableAttendeeSink;
 use Jma\Connect\Consumer\Sync\FieldReport;
 use Jma\Connect\Consumer\Sync\RowWriter;
 use Jma\Connect\Contracts\AttendeeSink;
 use Jma\Connect\Contracts\SyncAlertRecipients;
+use Jma\Connect\Data\AttendeeData;
+use Jma\Connect\Data\Dates;
 use Jma\Connect\Enums\SyncRunStatus;
 use Jma\Connect\Support\LocalTables;
 use Throwable;
@@ -37,7 +40,13 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 
     public int $uniqueFor = 600;
 
-    public function __construct(public SyncMapping $mapping, public ?Model $requestedBy = null)
+    /**
+     * Above this many, a run that would remove more synced people than it
+     * keeps removes nobody and warns instead, unless forced (Full resync).
+     */
+    public const REMOVAL_GUARD = 5;
+
+    public function __construct(public SyncMapping $mapping, public ?Model $requestedBy = null, public bool $force = false)
     {
         $this->onQueue(config('connect.consumer.queue', 'default'));
     }
@@ -47,14 +56,14 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
      * needed, and whoever asked sees the outcome straight away. A failure
      * is recorded on the run (and alerted) rather than thrown.
      */
-    public static function runNow(SyncMapping $mapping): ?SyncRun
+    public static function runNow(SyncMapping $mapping, bool $force = false): ?SyncRun
     {
         // A big first sync from a browser can outlast the web server's
         // timeout: let it finish anyway rather than stop half-way.
         @set_time_limit(0);
         ignore_user_abort(true);
 
-        rescue(fn () => static::dispatchSync($mapping));
+        rescue(fn () => static::dispatchSync($mapping, null, $force));
 
         return $mapping->runs()->latest('id')->first();
     }
@@ -92,13 +101,26 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         $writer = new RowWriter($sink, $mapping, $run);
         $report = new FieldReport;
 
+        // The built-in sink knows which rows it wrote, so it reads the whole
+        // list every run and removes anyone the source no longer has: an
+        // incremental read never mentions a row that was erased or stopped
+        // matching the source's filter. Custom sinks keep incremental reads.
+        $mirror = $sink instanceof TableAttendeeSink;
+        $present = [];
+
         try {
-            $since = $mapping->cursor?->subMinutes((int) config('connect.consumer.cursor_overlap_minutes', 5));
+            $since = $mirror ? null : $mapping->cursor?->subMinutes((int) config('connect.consumer.cursor_overlap_minutes', 5));
 
             foreach ($mapping->connection->source()->attendees($mapping->remote_event_id, $since) as $attendee) {
                 $report->add($attendee);
                 $writer->write($attendee);
+
+                if (! $attendee->isDeleted()) {
+                    $present[$attendee->id] = true;
+                }
             }
+
+            $removalWarning = $mirror ? $this->removeMissing($sink, $mapping, $writer, $present) : null;
         } catch (Throwable $e) {
             $run->update([
                 ...$writer->counts,
@@ -113,7 +135,7 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         }
 
         $previousWarnings = $mapping->runs()->whereKeyNot($run->id)->latest('id')->first()?->warnings ?? [];
-        $warnings = $report->warnings($mapping);
+        $warnings = [...$report->warnings($mapping), ...array_filter([$removalWarning])];
 
         $run->update([
             ...$writer->counts,
@@ -142,6 +164,43 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
         } elseif ($this->requestedBy !== null) {
             $this->notify([$this->requestedBy], $run);
         }
+    }
+
+    /**
+     * Removes (per the mapping's delete setting) the synced rows whose
+     * remote attendee wasn't in this complete read. Only runs after the
+     * whole list was read, and refuses a removal bigger than what's kept,
+     * which is likelier a misconfigured source than mass cancellations.
+     *
+     * @param  array<string, true>  $present
+     */
+    private function removeMissing(TableAttendeeSink $sink, SyncMapping $mapping, RowWriter $writer, array $present): ?string
+    {
+        // A destination that isn't set up held every row instead; removing
+        // anything then would act on a broken mapping.
+        if ($mapping->on_delete === 'ignore' || $mapping->destinationProblems() !== []) {
+            return null;
+        }
+
+        $missing = array_values(array_diff($sink->syncedRemoteIds($mapping), array_map('strval', array_keys($present))));
+
+        if ($missing === []) {
+            return null;
+        }
+
+        if (! $this->force && count($missing) > self::REMOVAL_GUARD && count($missing) > count($present)) {
+            return sprintf(
+                'The source sent %d attendee(s), but %d synced earlier are no longer among them. To be safe, none were removed: check the source is set up right, then use Full resync to remove them.',
+                count($present),
+                count($missing),
+            );
+        }
+
+        foreach ($missing as $remoteId) {
+            $writer->write(AttendeeData::fromArray(['id' => $remoteId, 'deleted_at' => Dates::format(now()->toImmutable())]));
+        }
+
+        return null;
     }
 
     public function failed(?Throwable $exception): void

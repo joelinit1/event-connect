@@ -159,3 +159,55 @@ it('explains a required column nothing fills, in preview and on held rows', func
     expect(app(RetryHeldRows::class)->retry($mapping))->toBe(['fixed' => 1, 'failed' => 0])
         ->and(ScannerAttendee::sole()->name)->toBe('Grace Hopper');
 });
+
+it('removes people the source no longer has, but never rows added by hand', function () {
+    $ada = RealWorld::registrant('Ada Lovelace');
+    $grace = RealWorld::registrant('Grace Hopper');
+    RealWorld::registrant('Mary Somerville');
+    $mapping = checkInMapping();
+
+    expect(SyncMappingJob::runNow($mapping)->created)->toBe(3);
+
+    $walkUp = ScannerAttendee::forceCreate(['event_id' => 7, 'name' => 'Walk-up', 'source' => 'ad_hoc']);
+
+    // Ada moves to another event (stops matching the source's filter);
+    // Grace's row is erased outright. Neither is ever sent as a deletion.
+    DB::table('reg_attendees')->where('id', $ada)->update(['event_id' => 2]);
+    DB::table('reg_attendees')->where('id', $grace)->delete();
+
+    $run = SyncMappingJob::runNow($mapping);
+
+    expect($run->deleted)->toBe(2)
+        ->and($run->warnings)->toBe([])
+        ->and(ScannerAttendee::pluck('name')->sort()->values()->all())->toBe(['Mary Somerville', 'Walk-up'])
+        ->and($walkUp->fresh()->trashed())->toBeFalse();
+
+    // Moving back restores the same row rather than creating another.
+    DB::table('reg_attendees')->where('id', $ada)->update(['event_id' => 1]);
+
+    expect(SyncMappingJob::runNow($mapping)->updated)->toBe(1)
+        ->and(ScannerAttendee::withTrashed()->where('name', 'Ada Lovelace')->count())->toBe(1);
+});
+
+it('refuses to remove most of the list unless forced, and says why', function () {
+    foreach (range(1, 8) as $i) {
+        RealWorld::registrant("Person {$i}");
+    }
+    $mapping = checkInMapping();
+    SyncMappingJob::runNow($mapping);
+
+    // The source is pointed at the wrong event by mistake: it sends nobody.
+    AttendeeSource::sole()->update(['filter_value' => '2']);
+
+    $run = SyncMappingJob::runNow($mapping);
+
+    expect($run->deleted)->toBe(0)
+        ->and(ScannerAttendee::count())->toBe(8)
+        ->and($run->warnings)->toHaveCount(1)
+        ->and($run->warnings[0])->toContain('none were removed')
+        ->and($mapping->fresh()->health()->value)->toBe('attention');
+
+    // Full resync is the deliberate override.
+    expect(SyncMappingJob::runNow($mapping, force: true)->deleted)->toBe(8)
+        ->and(ScannerAttendee::count())->toBe(0);
+});

@@ -126,6 +126,20 @@ On the wire, the named fields are `first_name`, `last_name`, `email`,
 `extra.<name>`**, and the consumer can map it to any column. A new field needs
 no package release: send it as an extra.
 
+### Who gets removed
+
+Every sync reads the event's whole list from the provider. Anyone it
+synced earlier who isn't in that list any more (cancelled, erased, moved to
+another event, no longer matching the source's filter) is removed as the
+mapping's delete setting says: deleted (through the app's model, so a model
+with soft deletes soft-deletes), soft-deleted, or kept. Only rows the sync
+wrote are ever removed, never ones added by hand.
+
+As a safeguard, a sync that would remove more people than it keeps (more
+than 5) removes nobody. It raises a warning instead ("Needs attention",
+and an alert): that's more likely a source pointed at the wrong event than
+mass cancellations. **Full resync** removes them anyway.
+
 A field the source doesn't send leaves the local column alone. It is never
 blanked. Rows are matched on the remote ID column (plus the event column), or
 on the row the package recorded creating. Never on email.
@@ -165,7 +179,7 @@ though it writes nothing:
 | Health | Meaning |
 | --- | --- |
 | Healthy | Last successful run finished within `stale_after_minutes` (default 120) |
-| Needs attention | Syncing, but the latest run raised a field-map warning |
+| Needs attention | Syncing, but the latest run raised a warning (a field-map problem, or removals held back by the safeguard) |
 | Overdue | Enabled, but no successful run in that window (or ever) |
 | Failing | The latest run failed or held rows, or rows are still held from earlier |
 | Off | Mapping disabled |

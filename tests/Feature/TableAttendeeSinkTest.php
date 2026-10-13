@@ -212,3 +212,17 @@ it('warns and alerts when a mapped field stops arriving or a new one appears, bu
     Notification::assertSentToTimes($admin, DatabaseNotification::class, 1);
     Notification::assertSentTo($admin, DatabaseNotification::class, fn (DatabaseNotification $n) => $n->data['title'] === 'Synced Spring Gala: check the field mapping');
 });
+
+it('deletes a synced row matched by remote ID column once the source stops sending it', function () {
+    $mapping = guestMapping();
+    DB::table('guests')->insert(['first_name' => 'Hand-added', 'event_id' => 42, 'created_at' => now(), 'updated_at' => now()]);
+
+    remoteSends([ada(), ada(['id' => 'a2', 'first_name' => 'Grace'])]);
+    SyncMappingJob::dispatchSync($mapping);
+
+    remoteSends([ada()]);
+    SyncMappingJob::dispatchSync($mapping);
+
+    expect(DB::table('guests')->orderBy('id')->pluck('first_name')->all())->toBe(['Hand-added', 'Ada'])
+        ->and($mapping->runs()->latest('id')->first()->deleted)->toBe(1);
+});

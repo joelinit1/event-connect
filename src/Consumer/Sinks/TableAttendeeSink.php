@@ -84,6 +84,42 @@ class TableAttendeeSink implements AttendeeSink
     }
 
     /**
+     * Remote IDs of the live (not deleted) local rows this mapping wrote:
+     * the ones a sync may remove when the source stops sending them. Rows
+     * added by hand have no remote ID or link, so they're never included.
+     *
+     * @return list<string>
+     */
+    public function syncedRemoteIds(SyncMapping $mapping): array
+    {
+        $row = $this->newRow($mapping);
+        $deletedAt = match (true) {
+            $this->usesSoftDeletes($row) => $row->getDeletedAtColumn(),
+            $mapping->on_delete === 'soft_delete' => 'deleted_at',
+            default => null,
+        };
+        $live = fn () => $this->query($mapping)->when($deletedAt, fn (Builder $query) => $query->whereNull($deletedAt));
+
+        if (filled($mapping->target_key_column)) {
+            return $live()
+                ->whereNotNull($mapping->target_key_column)
+                ->when(filled($mapping->target_event_column), fn (Builder $query) => $query->where($mapping->target_event_column, $mapping->local_event_id))
+                ->pluck($mapping->target_key_column)
+                ->map(fn ($id) => (string) $id)
+                ->all();
+        }
+
+        // Links to rows that were since deleted are left out by the query.
+        $links = RowLink::where('sync_mapping_id', $mapping->id)->pluck('remote_id', 'local_key');
+
+        return $links->keys()->chunk(1000)
+            ->flatMap(fn ($keys) => $live()->whereKey($keys->all())->pluck($row->getKeyName()))
+            ->map(fn ($key) => (string) $links[(string) $key])
+            ->values()
+            ->all();
+    }
+
+    /**
      * The app's model class for the destination, or null for a plain table.
      *
      * @return class-string<Model>|null
