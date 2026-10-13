@@ -8,6 +8,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -30,8 +31,9 @@ class ConnectServiceProvider extends ServiceProvider
         $this->app->bind(AttendeeSink::class, fn (Application $app): AttendeeSink => $app->make(config('connect.consumer.sink') ?? TableAttendeeSink::class));
 
         // Panels are built while the registry resolves; this runs after all
-        // of them, so the screens appear without the host registering the
-        // plugin. A host that registered it on a panel itself is left alone.
+        // of them, so the screens appear on the super admin's panel without
+        // the host registering the plugin. A host that registered it on a
+        // panel itself is left alone.
         $this->app->afterResolving(PanelRegistry::class, function (PanelRegistry $registry): void {
             if (! config('connect.provider.enabled') && ! config('connect.consumer.enabled')) {
                 return;
@@ -43,12 +45,32 @@ class ConnectServiceProvider extends ServiceProvider
                 return;
             }
 
-            $panel = filled(config('connect.panel'))
-                ? $panels->get(config('connect.panel'))
-                : $panels->first(fn (Panel $panel) => $panel->isDefault()) ?? $panels->first();
+            $panel = filled(config('connect.panel')) ? $panels->get(config('connect.panel')) : self::adminPanel($panels);
 
             $panel?->plugin(ConnectPlugin::make());
         });
+    }
+
+    /**
+     * The panel an app's super admin uses: the default one, unless that's a
+     * client panel (it has tenancy) and the app has a panel without tenancy,
+     * which is then the cross-client admin (e.g. /platform beside /manage).
+     *
+     * @param  Collection<string, Panel>  $panels
+     */
+    public static function adminPanel(Collection $panels): ?Panel
+    {
+        $default = $panels->first(fn (Panel $panel) => $panel->isDefault()) ?? $panels->first();
+
+        if ($default === null || ! $default->hasTenancy()) {
+            return $default;
+        }
+
+        $untenanted = $panels->reject(fn (Panel $panel) => $panel->hasTenancy());
+
+        return $untenanted->first(fn (Panel $panel) => in_array($panel->getId(), ['platform', 'admin', 'super-admin', 'superadmin'], true))
+            ?? $untenanted->first()
+            ?? $default;
     }
 
     public function boot(): void

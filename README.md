@@ -40,9 +40,19 @@ In each app, provider or consumer. No code changes:
    with `CONNECT_SCHEDULE` (a cron expression), or set it empty to schedule
    `connect:sync` yourself.
 
-The screens appear on the app's default Filament panel. To use another
-panel, set `CONNECT_PANEL` to its ID. An app that registers
-`ConnectPlugin` on a panel itself keeps that, and nothing is added.
+The screens appear under **Platform Admin** in the super admin's panel:
+
+| The app's panels | Where the screens go |
+| --- | --- |
+| One panel | That panel |
+| A default admin panel, plus others (host, gateway, client portal) | The default admin panel |
+| A default **client** panel with tenancy, plus a panel without (e.g. `/manage` and `/platform`) | The panel without tenancy (`platform` or `admin` first) |
+| One panel shared with clients through tenancy | That panel, inside any client (`/admin/<client>/…`) |
+
+To choose a panel yourself, set `CONNECT_PANEL` to its ID. An app that
+registers `ConnectPlugin` on a panel itself keeps that, and nothing is
+added. Only users listed in `CONNECT_ADMIN_EMAILS` see the screens; anyone
+else gets no menu entry, and a 403 if they open the address directly.
 
 Sanctum's `personal_access_tokens` table, which API client tokens need, is
 created by the migration if the app doesn't have it.

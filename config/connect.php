@@ -20,8 +20,9 @@ return [
 
     /*
      * The Filament panel (by ID) the screens are added to. Null means the
-     * app's default panel. Ignored if the host registers ConnectPlugin on a
-     * panel itself.
+     * super admin's panel: the default one, unless that's a client panel
+     * (with tenancy) and the app has one without, e.g. /platform. Ignored
+     * if the host registers ConnectPlugin on a panel itself.
      */
     'panel' => env('CONNECT_PANEL'),
 
