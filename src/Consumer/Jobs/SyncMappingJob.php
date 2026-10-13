@@ -49,6 +49,11 @@ class SyncMappingJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
      */
     public static function runNow(SyncMapping $mapping): ?SyncRun
     {
+        // A big first sync from a browser can outlast the web server's
+        // timeout: let it finish anyway rather than stop half-way.
+        @set_time_limit(0);
+        ignore_user_abort(true);
+
         rescue(fn () => static::dispatchSync($mapping));
 
         return $mapping->runs()->latest('id')->first();

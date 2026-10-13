@@ -38,6 +38,9 @@ it('follows pagination links and yields attendee DTOs', function () {
         ->and(array_map(fn (AttendeeData $a) => $a->id, $attendees))->toBe(['1', '2', '3']);
 
     Http::assertSentCount(2);
+
+    // The second request must be the next link as given, page number included.
+    Http::assertSent(fn ($request) => $request->url() === 'https://source.test/api/v1/events/7/attendees?page=2&per_page=200');
     Http::assertSent(fn ($request) => $request->hasHeader('Authorization', 'Bearer secret-token')
         && str_contains($request->url(), 'updated_since=2026-01-01T00%3A00%3A00%2B00%3A00')
         && str_contains($request->url(), 'per_page=200'));

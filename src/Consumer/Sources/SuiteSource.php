@@ -52,7 +52,9 @@ class SuiteSource implements Source
         $query['per_page'] = self::PER_PAGE;
 
         while ($url) {
-            $response = $this->request()->get($url, $query)->throw();
+            // Only pass $query when there is one: an empty array replaces the
+            // next link's own query string, which would re-read page one forever.
+            $response = ($query === [] ? $this->request()->get($url) : $this->request()->get($url, $query))->throw();
 
             foreach ($response->json('data', []) as $row) {
                 yield $row;
