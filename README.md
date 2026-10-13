@@ -16,7 +16,16 @@ code.
 
 In each app, provider or consumer. No code changes:
 
-1. `composer require joelinit1/event-connect:^0.2`, then `php artisan migrate`.
+1. Locally, in the app: tell Composer where the package lives (it's a public
+   GitHub repo, not on Packagist, and needs no token), then require it:
+
+   ```bash
+   composer config repositories.event-connect vcs https://github.com/joelinit1/event-connect.git
+   composer require joelinit1/event-connect:^0.2
+   ```
+
+   Commit `composer.json` and `composer.lock` and deploy. The deploy's
+   `php artisan migrate --force` adds the package's tables.
 2. Set `.env`:
 
    ```dotenv
@@ -111,6 +120,15 @@ A field the source doesn't send leaves the local column alone. It is never
 blanked. Rows are matched on the remote ID column (plus the event column), or
 on the row the package recorded creating. Never on email.
 
+### Behind Cloudflare
+
+The consumer calls the provider's `/api/v1` from its server. If the
+provider's domain is proxied by Cloudflare with **Bot Fight Mode** on,
+Cloudflare challenges that call and it never reaches the provider. **Test**
+on the connection then says "Cloudflare blocked this request". On the free
+plan, Bot Fight Mode can't be skipped for one path, so it has to be off for
+that zone.
+
 ## Seeing and fixing mis-mappings
 
 - **Preview** (on both sides): real rows through the current mapping, before
@@ -161,7 +179,9 @@ Other successful scheduled runs never notify anyone.
 ## Upgrading from 0.1.x
 
 - `composer require joelinit1/event-connect:^0.2` (`^0.1` doesn't accept
-  0.2), then `php artisan migrate`. That adds `connect_attendee_sources`,
+  0.2), then migrate. The repo is public now, so the Composer credential
+  (GitHub token) on the app's Forge site isn't needed any more; switch the
+  app's `repositories` URL to `https://github.com/joelinit1/event-connect.git`. That adds `connect_attendee_sources`,
   `connect_sync_issues` and `connect_row_links`, adds destination and
   field-map columns to `connect_sync_mappings` (making `local_event_id`
   nullable), and adds field counts to `connect_sync_runs`.

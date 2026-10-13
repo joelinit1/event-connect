@@ -65,3 +65,10 @@ it('surfaces an auth failure from test()', function () {
 
     connection()->source()->test();
 })->throws(RequestException::class);
+
+it('says plainly when Cloudflare blocks the request with a bot challenge', function () {
+    Http::fake(['source.test/*' => Http::response('<html>Just a moment...</html>', 403, ['cf-mitigated' => 'challenge', 'Server' => 'cloudflare'])]);
+
+    expect(fn () => connection()->source()->test())
+        ->toThrow(RuntimeException::class, 'Cloudflare blocked this request to source.test with a bot challenge');
+});
